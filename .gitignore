@@ -37,7 +37,7 @@ sdk/dist/sdk.js
 backend/public/sdk.js
 
 # docs
-.docs/
+_docs/
 
 # 부하테스트
 .loadtest/

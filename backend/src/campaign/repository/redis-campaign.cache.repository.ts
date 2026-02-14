@@ -16,7 +16,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
   private readonly logger = new Logger(RedisCampaignCacheRepository.name);
   private readonly KEY_PREFIX = 'campaign:';
   private readonly CAMPAIGN_CACHE_TTL = 60 * 60 * 24;
-  private readonly ALL_CAMPAIGNS_CACHE_TTL_MS = 10_000; // RTB decision hot path (짧은 TTL로 Redis SCAN/JSON.GET 비용 완화)
+  private readonly ALL_CAMPAIGNS_CACHE_TTL_MS = 60_000; // RTB decision hot path (짧은 TTL로 Redis SCAN/JSON.GET 비용 완화)
   private allCampaignsCache: {
     value: CachedCampaign[];
     expiresAtMs: number;
