@@ -262,6 +262,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
   async getAllCampaigns(): Promise<CachedCampaign[]> {
     const nowMs = Date.now();
 
+    // 전체 캠페인 캐시값이 존재하고 TTL이 안지났으면 그 값을 리턴
     const cached = this.allCampaignsCache;
     if (cached && cached.expiresAtMs > nowMs) {
       return cached.value;
