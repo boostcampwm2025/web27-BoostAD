@@ -36,3 +36,8 @@ mysql/init/*.sql
 sdk/dist/sdk.js
 backend/public/sdk.js
 
+# docs
+.docs/
+
+# 부하테스트
+.loadtest/
