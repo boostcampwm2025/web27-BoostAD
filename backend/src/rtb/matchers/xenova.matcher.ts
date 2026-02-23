@@ -33,6 +33,7 @@ export class TransformerMatcher extends Matcher {
 
   // 임베딩은 계산 비용이 높아서(모델 호출), 태그 문자열 기준으로 간단 캐싱합니다.
   private readonly embeddingCache = new Map<string, number[]>();
+  private readonly EMBEDDING_CACHE_MAX_SIZE = 1_000;
 
   constructor(
     private readonly campaignCacheRepo: CampaignCacheRepository,
@@ -70,29 +71,27 @@ export class TransformerMatcher extends Matcher {
     let requestEmbedding: number[];
     try {
       // 요청 임베딩은 모든 캠페인 비교에서 공통으로 사용되므로 한 번만 계산합니다.
-      requestEmbedding = await this.mlEngine.getEmbedding(requestText);
+      requestEmbedding = await this.getEmbeddingCached(requestText);
     } catch (error) {
       this.logger.warn('요청 태그 임베딩 생성에 실패했습니다.', error as Error);
       return [];
     }
 
     // 자격 있는 캠페인과 스코어 계산 (0~1)
-    const withSimilarity = await Promise.all(
-      eligibleCampaigns.map(async (campaign) => ({
-        campaign,
-        similarity: await this.scoreCampaignByTags(
-          requestEmbedding,
-          requestNorm,
-          requestTokens,
-          campaign
-        ),
-      }))
-    );
-
-    // 임계값 이상만 필터링
-    const candidates = withSimilarity.filter(
-      ({ similarity }) => similarity >= this.SIMILARITY_THRESHOLD
-    );
+    // - Promise.all(대량)로 한 번에 태스크를 쌓으면, 대규모 캠페인에서 메모리/마이크로태스크 오버헤드가 커질 수 있음, 게다가 여기서 굳이 Promise.all 쓸 이유없음
+    //   순차 계산 + 임계값 통과 케이스만 후보로 유지
+    const candidates: Candidate[] = [];
+    for (const campaign of eligibleCampaigns) {
+      const similarity = await this.scoreCampaignByTags(
+        requestEmbedding,
+        requestNorm,
+        requestTokens,
+        campaign
+      );
+      if (similarity >= this.SIMILARITY_THRESHOLD) {
+        candidates.push({ campaign, similarity });
+      }
+    }
 
     this.logger.debug(
       `필터링된 캠페인 수 ${candidates.length}/${allCampaigns.length} 캠페인의 유사도 (임계값: ${this.SIMILARITY_THRESHOLD})`
@@ -191,10 +190,23 @@ export class TransformerMatcher extends Matcher {
   private async getEmbeddingCached(text: string): Promise<number[]> {
     const key = this.normalizeText(text);
     const cached = this.embeddingCache.get(key);
-    if (cached) return cached;
+    if (cached) {
+      // LRU: recency 갱신
+      this.embeddingCache.delete(key);
+      this.embeddingCache.set(key, cached);
+      return cached;
+    }
 
     const embedding = await this.mlEngine.getEmbedding(text);
     this.embeddingCache.set(key, embedding);
+
+    // LRU eviction (최대 크기 초과 시 가장 오래된 항목 제거)
+    if (this.embeddingCache.size > this.EMBEDDING_CACHE_MAX_SIZE) {
+      const oldestKey = this.embeddingCache.keys().next().value as
+        | string
+        | undefined;
+      if (oldestKey) this.embeddingCache.delete(oldestKey);
+    }
     return embedding;
   }
 

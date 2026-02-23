@@ -1,0 +1,40 @@
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
+    container_name: boostad-backend-local
+    command: node dist/main.js
+    ports:
+      - '3000:3000'
+    environment:
+      PORT: '3000'
+      NODE_ENV: ${NODE_ENV:-development}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
+      CLIENT_URL: ${CLIENT_URL:-https://localhost:5173}
+      DB_HOST: mysql
+      DB_PORT: '3306'
+      DB_USERNAME: ${DB_USERNAME:-test_user}
+      DB_PASSWORD: ${DB_PASSWORD:-test_user}
+      DB_DATABASE: ${DB_DATABASE:-test_db}
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GOOGLE_REDIRECT_URI: ${GOOGLE_REDIRECT_URI:-}
+      NCP_ACCESS_KEY: ${NCP_ACCESS_KEY:-}
+      NCP_SECRET_KEY: ${NCP_SECRET_KEY:-}
+      NCP_REGION: ${NCP_REGION:-kr-standard}
+      NCP_ENDPOINT: ${NCP_ENDPOINT:-https://kr.object.ncloudstorage.com}
+      NCP_BUCKET: ${NCP_BUCKET:-boostadad-campaign-images}
+      TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:-}
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - boostad-local
+    restart: unless-stopped
+    cpus: ${BACKEND_CPUS:-1.0}
+    mem_limit: ${BACKEND_MEM_LIMIT:-1g}
+    pids_limit: ${BACKEND_PIDS_LIMIT:-256}

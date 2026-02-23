@@ -15,6 +15,7 @@ import {
 export class RedisCampaignCacheRepository implements CampaignCacheRepository {
   private readonly logger = new Logger(RedisCampaignCacheRepository.name);
   private readonly KEY_PREFIX = 'campaign:';
+  private readonly CAMPAIGN_KEYS_SET = 'campaign:keys';
   private readonly CAMPAIGN_CACHE_TTL = 60 * 60 * 24;
   private readonly ALL_CAMPAIGNS_CACHE_TTL_MS = 10_000; // RTB decision hot path (짧은 TTL로 Redis SCAN/JSON.GET 비용 완화)
   private allCampaignsCache: {
@@ -36,7 +37,10 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
 
     try {
       await this.ioredisClient.call('JSON.SET', key, '$', JSON.stringify(data));
-      await this.ioredisClient.expire(key, ttl);
+      await Promise.all([
+        this.ioredisClient.expire(key, ttl), // Key에 TTL을 설정하는 명령 expire
+        this.ioredisClient.sadd(this.CAMPAIGN_KEYS_SET, key),
+      ]);
     } catch (error) {
       this.logger.error(`캐시 저장 실패: ${id}`, error);
       throw error;
@@ -229,7 +233,10 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
 
   async deleteCampaignCacheById(id: string): Promise<void> {
     const key = this.getCampaignCacheKey(id);
-    await this.ioredisClient.del(key);
+    await Promise.all([
+      this.ioredisClient.del(key),
+      this.ioredisClient.srem(this.CAMPAIGN_KEYS_SET, key),
+    ]);
     this.logger.debug(`캐시 삭제: ${id}`);
   }
 
@@ -258,7 +265,9 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     }
   }
 
-  // RTB 비딩용: Redis에서 모든 캠페인 조회
+  /**
+   * Redis에서 전체 캠페인 조회
+   */
   async getAllCampaigns(): Promise<CachedCampaign[]> {
     const nowMs = Date.now();
 
@@ -273,22 +282,39 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
 
     const work = (async () => {
       try {
-        const pattern = `${this.KEY_PREFIX}*`;
-        const keys: string[] = [];
+        // SCAN은 Redis 전체 keyspace를 순회하므로(매칭 키가 적어도) key가 많은 환경에서 매우 느림
+        // 캠페인 키 인덱스(Set)를 사용해 O(#campaign) 조회로 변경. (인덱스가 비어있으면 SCAN으로 backfill)
+        let keys = await this.ioredisClient.smembers(this.CAMPAIGN_KEYS_SET);
+        keys = keys.filter((k) => k.startsWith(this.KEY_PREFIX));
 
-        // SCAN으로 모든 campaign:* 키 조회
-        let cursor = '0';
-        do {
-          const result = await this.ioredisClient.scan(
-            cursor,
-            'MATCH',
-            pattern,
-            'COUNT',
-            100
-          );
-          cursor = result[0];
-          keys.push(...result[1]);
-        } while (cursor !== '0');
+        if (keys.length === 0) {
+          const pattern = `${this.KEY_PREFIX}*`;
+          const scannedKeys: string[] = [];
+
+          // 캠페인 Key 인덱스가 없으면 SCAN으로 모든 campaign:* 키 조회 후 인덱스에 등록
+          let cursor = '0';
+          do {
+            const result = await this.ioredisClient.scan(
+              cursor,
+              'MATCH',
+              pattern,
+              'COUNT',
+              100
+            );
+            cursor = result[0];
+            scannedKeys.push(...result[1]);
+          } while (cursor !== '0');
+
+          keys = scannedKeys;
+
+          if (keys.length > 0) {
+            const BATCH_SIZE = 500;
+            for (let i = 0; i < keys.length; i += BATCH_SIZE) {
+              const batch = keys.slice(i, i + BATCH_SIZE);
+              await this.ioredisClient.sadd(this.CAMPAIGN_KEYS_SET, ...batch);
+            }
+          }
+        }
 
         if (keys.length === 0) {
           return [];
@@ -297,6 +323,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
         // JSON.GET는 다건 호출 시 latency가 커져 in-flight 요청이 쌓이며 heap spike로 이어질 수 있음
         // → pipeline + batch로 라운드트립을 줄입니다.
         const campaigns: CachedCampaign[] = [];
+        const staleKeys: string[] = [];
         const BATCH_SIZE = 200;
 
         for (let i = 0; i < keys.length; i += BATCH_SIZE) {
@@ -325,8 +352,20 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
                   parseError
                 );
               }
+              return;
             }
+
+            // 키는 인덱스에 있지만 값이 없으면(만료/삭제) stale로 간주합니다.
+            staleKeys.push(batchKeys[idx]);
           });
+        }
+
+        if (staleKeys.length > 0) {
+          const BATCH_SIZE = 500;
+          for (let i = 0; i < staleKeys.length; i += BATCH_SIZE) {
+            const batch = staleKeys.slice(i, i + BATCH_SIZE);
+            await this.ioredisClient.srem(this.CAMPAIGN_KEYS_SET, ...batch);
+          }
         }
 
         return campaigns;
