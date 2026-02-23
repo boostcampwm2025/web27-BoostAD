@@ -78,8 +78,8 @@ export class TransformerMatcher extends Matcher {
     }
 
     // 자격 있는 캠페인과 스코어 계산 (0~1)
-    // - Promise.all(대량)로 한 번에 태스크를 쌓으면, 대규모 캠페인에서 메모리/마이크로태스크 오버헤드가 커질 수 있어
-    //   순차 계산 + 임계값 통과 케이스만 후보로 유지합니다.
+    // - Promise.all(대량)로 한 번에 태스크를 쌓으면, 대규모 캠페인에서 메모리/마이크로태스크 오버헤드가 커질 수 있음, 게다가 여기서 굳이 Promise.all 쓸 이유없음
+    //   순차 계산 + 임계값 통과 케이스만 후보로 유지
     const candidates: Candidate[] = [];
     for (const campaign of eligibleCampaigns) {
       const similarity = await this.scoreCampaignByTags(

@@ -38,7 +38,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     try {
       await this.ioredisClient.call('JSON.SET', key, '$', JSON.stringify(data));
       await Promise.all([
-        this.ioredisClient.expire(key, ttl),
+        this.ioredisClient.expire(key, ttl), // Key에 TTL을 설정하는 명령 expire
         this.ioredisClient.sadd(this.CAMPAIGN_KEYS_SET, key),
       ]);
     } catch (error) {
@@ -265,7 +265,9 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     }
   }
 
-  // RTB 비딩용: Redis에서 모든 캠페인 조회
+  /**
+   * Redis에서 전체 캠페인 조회
+   */
   async getAllCampaigns(): Promise<CachedCampaign[]> {
     const nowMs = Date.now();
 
@@ -280,8 +282,8 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
 
     const work = (async () => {
       try {
-        // SCAN은 Redis 전체 keyspace를 순회하므로(매칭 키가 적어도) key가 많은 환경에서 매우 느릴 수 있습니다.
-        // 캠페인 키 인덱스(Set)를 사용해 O(#campaign) 조회로 바꿉니다. (인덱스가 비어있으면 SCAN으로 backfill)
+        // SCAN은 Redis 전체 keyspace를 순회하므로(매칭 키가 적어도) key가 많은 환경에서 매우 느림
+        // 캠페인 키 인덱스(Set)를 사용해 O(#campaign) 조회로 변경. (인덱스가 비어있으면 SCAN으로 backfill)
         let keys = await this.ioredisClient.smembers(this.CAMPAIGN_KEYS_SET);
         keys = keys.filter((k) => k.startsWith(this.KEY_PREFIX));
 
@@ -289,7 +291,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
           const pattern = `${this.KEY_PREFIX}*`;
           const scannedKeys: string[] = [];
 
-          // SCAN으로 모든 campaign:* 키 조회 (backfill)
+          // 캠페인 Key 인덱스가 없으면 SCAN으로 모든 campaign:* 키 조회 후 인덱스에 등록
           let cursor = '0';
           do {
             const result = await this.ioredisClient.scan(
