@@ -42,7 +42,11 @@ export class TransformerMatcher extends Matcher {
     super();
   }
 
-  //  ML 모델(Transformer)을 사용하여 문맥(Tags)과 유사도가 높은 캠페인 후보를 찾습니다.
+  /**
+   * Redis에 저장된 캠페인 데이터들을 바탕으로 Active, IsHighIntent, 날짜 범위, 백테 유사도 비교값을 기반으로 후보 캠페인들 반환
+   * @param context
+   * @returns
+   */
   async findCandidatesByTags(context: DecisionContext): Promise<Candidate[]> {
     // ML 모델 준비 안 됐으면 빈 배열 반환 (Scorer에서 태그 매칭으로 커버 예정)
     if (!this.mlEngine.isReady()) {
@@ -72,6 +76,7 @@ export class TransformerMatcher extends Matcher {
     try {
       // 요청 임베딩은 모든 캠페인 비교에서 공통으로 사용되므로 한 번만 계산합니다.
       requestEmbedding = await this.getEmbeddingCached(requestText);
+      // requestEmbedding = await this.mlEngine.getEmbedding(requestText);
     } catch (error) {
       this.logger.warn('요청 태그 임베딩 생성에 실패했습니다.', error as Error);
       return [];

@@ -23,8 +23,9 @@ export class TypeOrmBidLogRepository extends BidLogRepository {
     await this.repository.save(bidLog);
   }
 
-  async saveMany(bidLogs: BidLog[]): Promise<void> {
-    await this.repository.save(bidLogs);
+  async saveMany(bidLogs: BidLog[]): Promise<BidLog[]> {
+    const result = await this.repository.save(bidLogs);
+    return result;
   }
 
   async findByAuctionId(auctionId: string): Promise<BidLog[]> {

@@ -8,7 +8,7 @@ export abstract class BidLogRepository {
   abstract save(bidLog: BidLog): Promise<void>;
 
   // 여러 입찰 로그들을 일괄 저장
-  abstract saveMany(bidLogs: BidLog[]): Promise<void>;
+  abstract saveMany(bidLogs: BidLog[]): Promise<BidLog[]>;
 
   // 옥션 ID로 입찰 로그 조회
   abstract findByAuctionId(auctionId: string): Promise<BidLog[]>;

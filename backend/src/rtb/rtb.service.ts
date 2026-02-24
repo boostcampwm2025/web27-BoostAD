@@ -78,7 +78,7 @@ export class RTBService {
       const scored: ScoredCandidate[] =
         await this.scorer.scoreCandidates(candidates);
 
-      // 4. 우승자 선정
+      // 4. 경매에 참여한 캠페인들에 대해 승자 도출, 전체결과 반환
       const result = await this.selector.selectWinner(scored);
 
       // 5. 패배한 캠페인들의 Spent 롤백
@@ -105,20 +105,32 @@ export class RTBService {
         postUrl: context.postUrl,
         reason: '', // 추후에 수정 필요
       }));
-      await this.bidLogRepository.saveMany(bidLogs);
+      const savedBids = await this.bidLogRepository.saveMany(bidLogs);
+      const campaignMetaById = new Map(
+        result.candidates.map((candidate) => [
+          candidate.id,
+          { userId: candidate.userId, campaignTitle: candidate.title },
+        ])
+      );
 
       this.logger.log(
         `Auction ${auctionId}: ${bidLogs.length}개 BidLog 저장 완료 (WIN: ${result.winner.id})`
       );
 
       // SSE: 입찰 이벤트 발행 (모든 BidLog에 대해)
-      const savedBids = await this.bidLogRepository.findByAuctionId(auctionId);
+      // TODO: DB 병목
+      // const savedBids = await this.bidLogRepository.findByAuctionId(auctionId);
 
-      // TODO: 이 부분 병렬처리로 최적화 가능할 듯
-      for (const savedBid of savedBids) {
-        if (savedBid.id) {
-          await this.bidLogService.emitBidCreated(savedBid.id);
-        }
+      for (const bid of savedBids) {
+        const meta = campaignMetaById.get(bid.campaignId);
+        this.bidLogService.emitBidCreated({
+          log: bid,
+          userId: meta?.userId ?? 0,
+          campaignTitle: meta?.campaignTitle ?? 'Unknown Campaign',
+          blogKey: context.blogKey,
+          blogName: context.blogName,
+          winAmount: result.winner.maxCpc,
+        });
       }
       // --------------------------------------------------------------------------------------------------------------------------------------
 

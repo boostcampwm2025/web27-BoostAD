@@ -1,7 +1,7 @@
 import { Injectable, MessageEvent } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Observable } from 'rxjs';
-import { BidStatus } from './bid-log.types';
+import { BidCreatedEventPayload, BidStatus } from './bid-log.types';
 import { BidLogRepository } from './repositories/bid-log.repository.interface';
 import { BidLogDataDto, BidLogItemDto } from './dto/bid-log-response.dto';
 import { CampaignRepository } from 'src/campaign/repository/campaign.repository.interface';
@@ -102,25 +102,18 @@ export class BidLogService {
   }
 
   // RTB에서 호출할 이벤트 발행 메서드
-  async emitBidCreated(bidLogId: number): Promise<void> {
-    // BidLog 조회 및 DTO 변환
-    const log = await this.bidLogRepository.findById(bidLogId);
-    if (!log) return;
-
-    const [campaign, blog, winAmount] = await Promise.all([
-      this.campaignRepository.getById(log.campaignId),
-      this.blogRepository.findById(log.blogId),
-      this.bidLogRepository.findWinAmountByAuctionId(log.auctionId),
-    ]);
+  emitBidCreated(payload: BidCreatedEventPayload): void {
+    const { log, userId, campaignTitle, blogKey, blogName, winAmount } =
+      payload;
 
     const bidData: BidLogItemDto = {
       id: log.id!,
       createdAt: log.createdAt!,
       campaignId: log.campaignId,
-      campaignTitle: campaign?.title || 'Unknown Campaign',
-      blogKey: blog?.blogKey || 'Unknown Blog Key',
-      blogName: blog?.name || 'Unknown Blog',
-      postUrl: log.postUrl || blog?.domain || 'unknown.com',
+      campaignTitle,
+      blogKey,
+      blogName,
+      postUrl: log.postUrl || 'unknown.com',
       bidAmount: log.bidPrice,
       winAmount: winAmount,
       isWon: log.status === BidStatus.WIN,
@@ -129,7 +122,6 @@ export class BidLogService {
     };
 
     // userId별로 다른 이벤트 발행 (해당 광고주만 수신)
-    const userId = campaign?.userId || 0;
     this.eventEmitter.emit(`bid.created.${userId}`, bidData);
   }
 }
