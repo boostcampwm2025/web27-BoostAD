@@ -4,8 +4,8 @@ import type { Candidate, ScoredCandidate } from '../types/decision.types';
 export abstract class Scorer {
   // 여러 캠페인 점수 (외부 API)
   /**
-   * 
-   * @param candidates 
+   *
+   * @param candidates
    */
   abstract scoreCandidates(candidates: Candidate[]): Promise<ScoredCandidate[]>;
 }

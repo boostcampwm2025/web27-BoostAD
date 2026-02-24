@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, InternalServerErrorException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 import { BidLogRepository } from './bid-log.repository.interface';
@@ -23,8 +23,13 @@ export class TypeOrmBidLogRepository extends BidLogRepository {
     await this.repository.save(bidLog);
   }
 
-  async saveMany(bidLogs: BidLog[]): Promise<void> {
-    await this.repository.save(bidLogs);
+  async saveMany(bidLogs: BidLog[]): Promise<BidLog[]> {
+    const result = await this.repository.save(bidLogs);
+    if (!result) {
+      throw new InternalServerErrorException('DB 저장에 실패했습니다.');
+    }
+
+    return result;
   }
 
   async findByAuctionId(auctionId: string): Promise<BidLog[]> {

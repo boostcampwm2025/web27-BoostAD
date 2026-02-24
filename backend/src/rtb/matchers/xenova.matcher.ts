@@ -42,7 +42,6 @@ export class TransformerMatcher extends Matcher {
     super();
   }
 
-  //  ML 모델(Transformer)을 사용하여 문맥(Tags)과 유사도가 높은 캠페인 후보를 찾습니다.
   /**
    * Redis에 저장된 캠페인 데이터들을 바탕으로 Active, IsHighIntent, 날짜 범위, 백테 유사도 비교값을 기반으로 후보 캠페인들 반환
    * @param context

@@ -105,7 +105,7 @@ export class RTBService {
         postUrl: context.postUrl,
         reason: '', // 추후에 수정 필요
       }));
-      await this.bidLogRepository.saveMany(bidLogs);
+      const savedBids = await this.bidLogRepository.saveMany(bidLogs);
 
       this.logger.log(
         `Auction ${auctionId}: ${bidLogs.length}개 BidLog 저장 완료 (WIN: ${result.winner.id})`
@@ -113,7 +113,7 @@ export class RTBService {
 
       // SSE: 입찰 이벤트 발행 (모든 BidLog에 대해)
       // TODO: DB 병목
-      const savedBids = await this.bidLogRepository.findByAuctionId(auctionId);
+      // const savedBids = await this.bidLogRepository.findByAuctionId(auctionId);
 
       // TODO: 이 부분 병렬처리로 최적화 가능할 듯
       for (const savedBid of savedBids) {
