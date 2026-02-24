@@ -104,6 +104,7 @@ export class BidLogService {
   // RTB에서 호출할 이벤트 발행 메서드
   async emitBidCreated(bidLogId: number): Promise<void> {
     // BidLog 조회 및 DTO 변환
+    // TODO: 매 hotpath 요청마다 emitBidCreated가 호출되고 Bidlog테이블 전체조회가 일어남, 제거필요
     const log = await this.bidLogRepository.findById(bidLogId);
     if (!log) return;
 

@@ -25,10 +25,6 @@ export class TypeOrmBidLogRepository extends BidLogRepository {
 
   async saveMany(bidLogs: BidLog[]): Promise<BidLog[]> {
     const result = await this.repository.save(bidLogs);
-    if (!result) {
-      throw new InternalServerErrorException('DB 저장에 실패했습니다.');
-    }
-
     return result;
   }
 
