@@ -1,7 +1,7 @@
 import { Injectable, MessageEvent } from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Observable } from 'rxjs';
-import { BidStatus } from './bid-log.types';
+import { BidLog, BidStatus } from './bid-log.types';
 import { BidLogRepository } from './repositories/bid-log.repository.interface';
 import { BidLogDataDto, BidLogItemDto } from './dto/bid-log-response.dto';
 import { CampaignRepository } from 'src/campaign/repository/campaign.repository.interface';
@@ -102,12 +102,10 @@ export class BidLogService {
   }
 
   // RTB에서 호출할 이벤트 발행 메서드
-  async emitBidCreated(bidLogId: number): Promise<void> {
+  async emitBidCreated(log: BidLog): Promise<void> {
     // BidLog 조회 및 DTO 변환
     // TODO: 매 hotpath 요청마다 emitBidCreated가 호출되고 Bidlog테이블 전체조회가 일어남, 제거필요
-    const log = await this.bidLogRepository.findById(bidLogId);
-    if (!log) return;
-
+    // const log = await this.bidLogRepository.findById(bidLogId);
     const [campaign, blog, winAmount] = await Promise.all([
       this.campaignRepository.getById(log.campaignId),
       this.blogRepository.findById(log.blogId),

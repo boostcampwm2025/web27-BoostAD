@@ -117,9 +117,7 @@ export class RTBService {
 
       // TODO: 이 부분 병렬처리로 최적화 가능할 듯
       for (const savedBid of savedBids) {
-        if (savedBid.id) {
-          await this.bidLogService.emitBidCreated(savedBid.id);
-        }
+        await this.bidLogService.emitBidCreated(savedBid);
       }
       // --------------------------------------------------------------------------------------------------------------------------------------
 
