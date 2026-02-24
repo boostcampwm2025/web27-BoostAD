@@ -115,10 +115,12 @@ export class RTBService {
       // TODO: DB 병목
       // const savedBids = await this.bidLogRepository.findByAuctionId(auctionId);
 
-      // TODO: 이 부분 병렬처리로 최적화 가능할 듯
-      for (const savedBid of savedBids) {
-        await this.bidLogService.emitBidCreated(savedBid);
-      }
+      // Promise 병렬처리
+      await Promise.allSettled(
+        savedBids.map((bid) => {
+          return this.bidLogService.emitBidCreated(bid);
+        })
+      );
       // --------------------------------------------------------------------------------------------------------------------------------------
 
       return {
