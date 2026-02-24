@@ -112,6 +112,7 @@ export class RTBService {
       );
 
       // SSE: 입찰 이벤트 발행 (모든 BidLog에 대해)
+      // TODO: DB 병목
       const savedBids = await this.bidLogRepository.findByAuctionId(auctionId);
 
       // TODO: 이 부분 병렬처리로 최적화 가능할 듯

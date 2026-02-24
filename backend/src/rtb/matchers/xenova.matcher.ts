@@ -72,6 +72,7 @@ export class TransformerMatcher extends Matcher {
     try {
       // 요청 임베딩은 모든 캠페인 비교에서 공통으로 사용되므로 한 번만 계산합니다.
       requestEmbedding = await this.getEmbeddingCached(requestText);
+      // requestEmbedding = await this.mlEngine.getEmbedding(requestText);
     } catch (error) {
       this.logger.warn('요청 태그 임베딩 생성에 실패했습니다.', error as Error);
       return [];
