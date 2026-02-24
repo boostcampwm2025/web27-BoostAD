@@ -78,7 +78,7 @@ export class RTBService {
       const scored: ScoredCandidate[] =
         await this.scorer.scoreCandidates(candidates);
 
-      // 4. 우승자 선정
+      // 4. 경매에 참여한 캠페인들에 대해 승자 도출, 전체결과 반환
       const result = await this.selector.selectWinner(scored);
 
       // 5. 패배한 캠페인들의 Spent 롤백
