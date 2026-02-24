@@ -16,3 +16,12 @@ export interface BidLog {
   behaviorScore: number | null;
   postUrl?: string | null;
 }
+
+export interface BidCreatedEventPayload {
+  log: BidLog;
+  userId: number;
+  campaignTitle: string;
+  blogKey: string;
+  blogName: string;
+  winAmount: number | null;
+}

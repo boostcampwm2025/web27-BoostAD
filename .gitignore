@@ -42,4 +42,4 @@ _docs/
 # 부하테스트
 .loadtest/
 
-AGENTS.md
+AGENTS.private.md

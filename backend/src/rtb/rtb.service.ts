@@ -106,6 +106,12 @@ export class RTBService {
         reason: '', // 추후에 수정 필요
       }));
       const savedBids = await this.bidLogRepository.saveMany(bidLogs);
+      const campaignMetaById = new Map(
+        result.candidates.map((candidate) => [
+          candidate.id,
+          { userId: candidate.userId, campaignTitle: candidate.title },
+        ])
+      );
 
       this.logger.log(
         `Auction ${auctionId}: ${bidLogs.length}개 BidLog 저장 완료 (WIN: ${result.winner.id})`
@@ -115,12 +121,17 @@ export class RTBService {
       // TODO: DB 병목
       // const savedBids = await this.bidLogRepository.findByAuctionId(auctionId);
 
-      // Promise 병렬처리
-      await Promise.allSettled(
-        savedBids.map((bid) => {
-          return this.bidLogService.emitBidCreated(bid);
-        })
-      );
+      for (const bid of savedBids) {
+        const meta = campaignMetaById.get(bid.campaignId);
+        this.bidLogService.emitBidCreated({
+          log: bid,
+          userId: meta?.userId ?? 0,
+          campaignTitle: meta?.campaignTitle ?? 'Unknown Campaign',
+          blogKey: context.blogKey,
+          blogName: context.blogName,
+          winAmount: result.winner.maxCpc,
+        });
+      }
       // --------------------------------------------------------------------------------------------------------------------------------------
 
       return {
