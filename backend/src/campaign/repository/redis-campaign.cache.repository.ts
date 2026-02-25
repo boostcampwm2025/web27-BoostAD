@@ -167,6 +167,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     const key = this.getCampaignCacheKey(campaignId);
 
     try {
+      // lua 스크립트로 트랜잭션 처리
       const result = (await this.ioredisClient.eval(
         REDIS_INCREMENT_SPENT_SCRIPT,
         1,

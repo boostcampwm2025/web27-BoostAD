@@ -207,7 +207,7 @@ export class TransformerMatcher extends Matcher {
 
     // LRU eviction (최대 크기 초과 시 가장 오래된 항목 제거)
     if (this.embeddingCache.size > this.EMBEDDING_CACHE_MAX_SIZE) {
-      const oldestKey = this.embeddingCache.keys().next().value as
+      const oldestKey = this.embeddingCache.keys().next().value as  // 자스 Map은 삽입 순서 유지하므로 next로 가장 먼저 들어간 값 뺄 수 있음 LRU
         | string
         | undefined;
       if (oldestKey) this.embeddingCache.delete(oldestKey);

@@ -57,6 +57,7 @@ export class RTBService {
           `후보가 없습니다. Fallback 캠페인 조회: ${this.FALLBACK_CAMPAIGN_ID}`
         );
 
+        // TODO: 캠페인 개수가 많아지면 O(N)이라 병목 예상
         const fallbackCampaign =
           await this.campaignCacheRepository.findCampaignCacheById(
             this.FALLBACK_CAMPAIGN_ID
@@ -118,8 +119,6 @@ export class RTBService {
       );
 
       // SSE: 입찰 이벤트 발행 (모든 BidLog에 대해)
-      // TODO: DB 병목
-      // const savedBids = await this.bidLogRepository.findByAuctionId(auctionId);
 
       for (const bid of savedBids) {
         const meta = campaignMetaById.get(bid.campaignId);
@@ -176,7 +175,7 @@ export class RTBService {
       (candidate) => candidate.id !== result.winner.id
     );
 
-    // 병렬 처리 - p-limit 사용
+    // 병렬 처리 - p-limit 사용 
     await Promise.allSettled(
       losers.map((loser) =>
         this.limit(async () => {
@@ -214,7 +213,7 @@ export class RTBService {
               campaign.totalBudget
             );
 
-            if (reserved) {
+            if (reserved == true) {
               eligibleCandidates.push(candidate);
             } else {
               this.logger.debug(
