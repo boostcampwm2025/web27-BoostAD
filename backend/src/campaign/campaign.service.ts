@@ -133,6 +133,7 @@ export class CampaignService {
 
     // 트랜잭션으로 캠페인 생성과 크레딧 차감을 원자적으로? 처리
     return await this.dataSource.transaction(async (manager) => {
+      // TODO: Datasource가 아닌 InjectRepository로 받은 인스턴스로 쿼리를 날리고있어 트랜잭션에 안묶이므로 수정필요
       const campaign = await this.campaignRepository.create(
         userId,
         dto,
