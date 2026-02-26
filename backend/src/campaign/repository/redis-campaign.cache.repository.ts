@@ -325,7 +325,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     if (this.allCampaignsInFlight) {
       return this.allCampaignsInFlight;
     }
-
+    // stale값을 fallback용으로 설정
     const previous = this.allCampaignsCache;
 
     const work = (async () => {
