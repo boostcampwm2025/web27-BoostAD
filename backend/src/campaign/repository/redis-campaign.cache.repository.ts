@@ -300,6 +300,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       return this.allCampaignsInFlight;
     }
 
+    // 요청과 요청사이의 간격이 갈어져서 nowMs가 staleTTL마저도 지나게되면 동기로 갱신
     return this.refreshAllCampaignsCache();
   }
 
