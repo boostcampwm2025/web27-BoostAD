@@ -1,9 +1,9 @@
 import {
-  Injectable,
-  NotFoundException,
   BadRequestException,
   ForbiddenException,
+  Injectable,
   Logger,
+  NotFoundException,
 } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { InjectQueue } from '@nestjs/bullmq';
@@ -15,13 +15,13 @@ import { CampaignRepository } from './repository/campaign.repository.interface';
 import { CreateCampaignDto } from './dto/create-campaign.dto';
 import { UpdateCampaignDto } from './dto/update-campaign.dto';
 import { GetCampaignListDto } from './dto/get-campaign-list.dto';
-import { CampaignStatus, CampaignEntity } from './entities/campaign.entity';
+import { CampaignEntity, CampaignStatus } from './entities/campaign.entity';
 import { TagEntity } from '../tag/entities/tag.entity';
 import type {
-  CampaignWithTags,
-  CampaignWithStats,
   CachedCampaign,
   CachedCampaignWithoutSpent,
+  CampaignWithStats,
+  CampaignWithTags,
 } from './types/campaign.types';
 import { AVAILABLE_TAGS } from '../common/constants';
 import { UserRepository } from 'src/user/repository/user.repository.interface';
@@ -42,7 +42,6 @@ export class CampaignService {
     private readonly campaignRepository: CampaignRepository,
     private readonly userRepository: UserRepository,
     private readonly campaignCacheRepository: CampaignCacheRepository,
-    // private readonly creditHistoryRepository: CreditHistoryRepository, // TODO: 이거는 언제 쓰이는 걸까
     private readonly logRepository: LogRepository,
     @InjectDataSource() private readonly dataSource: DataSource,
     @InjectQueue('embedding-queue')
