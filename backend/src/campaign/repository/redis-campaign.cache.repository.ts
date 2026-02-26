@@ -7,8 +7,8 @@ import {
   CachedCampaignWithoutSpent,
 } from '../types/campaign.types';
 import {
-  REDIS_INCREMENT_SPENT_SCRIPT,
   REDIS_DECREMENT_SPENT_SCRIPT,
+  REDIS_INCREMENT_SPENT_SCRIPT,
 } from '../scripts/lua-script';
 
 @Injectable()
@@ -18,10 +18,15 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
   private readonly CAMPAIGN_KEYS_SET = 'campaign:keys';
   private readonly CAMPAIGN_CACHE_TTL = 60 * 60 * 24;
   private readonly ALL_CAMPAIGNS_CACHE_TTL_MS = 10_000; // RTB decision hot path (짧은 TTL로 Redis SCAN/JSON.GET 비용 완화)
+  private readonly ALL_CAMPAIGNS_CACHE_TTL_JITTER_RATIO = 0.2; // multi-instance stampede 완화 (±20%)
+  private readonly ALL_CAMPAIGNS_CACHE_SWR_MS = 3_000; // stale-while-revalidate window
+
   private allCampaignsCache: {
     value: CachedCampaign[];
-    expiresAtMs: number;
+    freshUntilMs: number;
+    staleUntilMs: number;
   } | null = null;
+
   private allCampaignsInFlight: Promise<CachedCampaign[]> | null = null;
 
   constructor(
@@ -269,17 +274,58 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
   /**
    * Redis에서 전체 캠페인 조회
    */
-  async getAllCampaigns(): Promise<CachedCampaign[]> {
+  async getAllCampaigns(options?: {
+    allowStale?: boolean;
+  }): Promise<CachedCampaign[]> {
     const nowMs = Date.now();
+    const allowStale = options?.allowStale ?? true;
 
     const cached = this.allCampaignsCache;
-    if (cached && cached.expiresAtMs > nowMs) {
+    if (cached && cached.freshUntilMs > nowMs) {
       return cached.value;
     }
 
+    // 현재 반환대기중인 Promise가 없으면 백그라운드 refresh 요청하고 stale값 반환
+    if (allowStale && cached && cached.staleUntilMs > nowMs) {
+      if (!this.allCampaignsInFlight) {
+        void this.refreshAllCampaignsCache().catch(() => {
+          // refresh 내부에서 로깅하므로 여기서는 noop
+        });
+      }
+      return cached.value;
+    }
+
+    // 반환대기중인 Promise가 있으면 해당 Promise를 반환받음
     if (this.allCampaignsInFlight) {
       return this.allCampaignsInFlight;
     }
+
+    return this.refreshAllCampaignsCache();
+  }
+
+  private getCampaignCacheKey(id: string): string {
+    return `${this.KEY_PREFIX}${id}`;
+  }
+
+  private computeJitteredTtlMs(baseTtlMs: number): number {
+    const ratio = Math.max(0, this.ALL_CAMPAIGNS_CACHE_TTL_JITTER_RATIO);
+    if (ratio === 0) return baseTtlMs;
+
+    const min = Math.floor(baseTtlMs * (1 - ratio));
+    const max = Math.ceil(baseTtlMs * (1 + ratio));
+    const clampedMin = Math.max(0, min);
+    const clampedMax = Math.max(clampedMin, max);
+    return (
+      clampedMin + Math.floor(Math.random() * (clampedMax - clampedMin + 1))
+    );
+  }
+
+  private async refreshAllCampaignsCache(): Promise<CachedCampaign[]> {
+    if (this.allCampaignsInFlight) {
+      return this.allCampaignsInFlight;
+    }
+
+    const previous = this.allCampaignsCache;
 
     const work = (async () => {
       try {
@@ -288,6 +334,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
         let keys = await this.ioredisClient.smembers(this.CAMPAIGN_KEYS_SET);
         keys = keys.filter((k) => k.startsWith(this.KEY_PREFIX));
 
+        // 키 인덱스가 없으면 SCAN으로 전수조사
         if (keys.length === 0) {
           const pattern = `${this.KEY_PREFIX}*`;
           const scannedKeys: string[] = [];
@@ -372,6 +419,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
         return campaigns;
       } catch (error) {
         this.logger.error('모든 캠페인 조회 실패', error);
+        if (previous) return previous.value;
         return [];
       } finally {
         this.allCampaignsInFlight = null;
@@ -379,17 +427,13 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     })();
 
     this.allCampaignsInFlight = work;
-
     const campaigns = await work;
-    this.allCampaignsCache = {
-      value: campaigns,
-      expiresAtMs: Date.now() + this.ALL_CAMPAIGNS_CACHE_TTL_MS,
-    };
+
+    const ttlMs = this.computeJitteredTtlMs(this.ALL_CAMPAIGNS_CACHE_TTL_MS);
+    const freshUntilMs = Date.now() + ttlMs;
+    const staleUntilMs = freshUntilMs + this.ALL_CAMPAIGNS_CACHE_SWR_MS;
+    this.allCampaignsCache = { value: campaigns, freshUntilMs, staleUntilMs };
 
     return campaigns;
-  }
-
-  private getCampaignCacheKey(id: string): string {
-    return `${this.KEY_PREFIX}${id}`;
   }
 }
