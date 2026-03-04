@@ -1,11 +1,11 @@
 import {
-  Controller,
-  Post,
-  Body,
-  UseGuards,
-  Req,
   BadRequestException,
+  Body,
+  Controller,
   HttpCode,
+  Post,
+  Req,
+  UseGuards,
 } from '@nestjs/common';
 import { SdkService } from './sdk.service';
 import { CreateViewLogDto } from './dto/create-view-log.dto';
@@ -22,6 +22,7 @@ import {
 export class SdkController {
   constructor(private readonly sdkService: SdkService) {}
 
+  //TODO: decision API 호출 수 만큼 뷰로그 생성 요청이 보내지므로 DB요청도 선형적으로 증가하게됨
   @Public()
   @UseGuards(BlogKeyValidationGuard)
   @Post('campaign-view')
