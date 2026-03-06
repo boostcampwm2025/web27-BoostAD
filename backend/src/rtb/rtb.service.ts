@@ -3,8 +3,8 @@ import { Matcher } from './matchers/matcher.interface';
 import { Scorer } from './scorers/scorer.interface';
 import { CampaignSelector } from './selectors/selector.interface';
 import type {
-  DecisionContext,
   Candidate,
+  DecisionContext,
   ScoredCandidate,
   SelectionResult,
 } from './types/decision.types';
@@ -226,7 +226,7 @@ export class RTBService {
       (candidate) => candidate.id !== result.winner.id
     );
 
-    // 병렬 처리 - p-limit 사용 
+    // 병렬 처리 - p-limit 사용
     await Promise.allSettled(
       losers.map((loser) =>
         this.limit(async () => {

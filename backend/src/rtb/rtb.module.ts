@@ -37,7 +37,13 @@ import { BlogModule } from '../blog/blog.module';
 import { MetricsModule } from '../metrics/metrics.module';
 
 @Module({
-  imports: [CacheModule, BidLogModule, CampaignModule, BlogModule, MetricsModule],
+  imports: [
+    CacheModule,
+    BidLogModule,
+    CampaignModule,
+    BlogModule,
+    MetricsModule,
+  ],
   controllers: [RTBController],
   providers: [
     RTBService,

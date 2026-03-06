@@ -4,6 +4,7 @@ import { CampaignCacheRepository } from '../../campaign/repository/campaign.cach
 import { MLEngine } from '../ml/mlEngine.interface';
 import type { Candidate, DecisionContext } from '../types/decision.types';
 import type { CachedCampaign } from '../../campaign/types/campaign.types';
+import { MetricsService } from '../../metrics/metrics.service';
 @Injectable()
 export class TransformerMatcher extends Matcher {
   private readonly logger = new Logger(TransformerMatcher.name);
@@ -37,7 +38,8 @@ export class TransformerMatcher extends Matcher {
 
   constructor(
     private readonly campaignCacheRepo: CampaignCacheRepository,
-    private readonly mlEngine: MLEngine
+    private readonly mlEngine: MLEngine,
+    private readonly metricsService: MetricsService
   ) {
     super();
   }
@@ -50,6 +52,7 @@ export class TransformerMatcher extends Matcher {
   async findCandidatesByTags(context: DecisionContext): Promise<Candidate[]> {
     // ML 모델 준비 안 됐으면 빈 배열 반환 (Scorer에서 태그 매칭으로 커버 예정)
     if (!this.mlEngine.isReady()) {
+      this.metricsService.incRtbFallback('matcher_empty');
       this.logger.warn('ML 모델이 준비가 안 되었습니다.');
       return [];
     }
@@ -59,25 +62,53 @@ export class TransformerMatcher extends Matcher {
     const requestTokens = new Set(this.tokenizeText(requestText));
 
     // Redis에서 모든 캠페인 조회 (캐시 우선 전략)
+    const getAllCampaignsStartedAt = process.hrtime.bigint();
     const allCampaigns = await this.campaignCacheRepo.getAllCampaigns();
+    this.metricsService.recordRtbStage(
+      'match_get_all_campaigns',
+      'ok',
+      this.elapsedMs(getAllCampaignsStartedAt)
+    );
 
     // 비딩 자격 필터링: ACTIVE + 날짜 범위 + deletedAt + embeddingTags + isHighIntent 존재
+    const filterEligibleStartedAt = process.hrtime.bigint();
     const eligibleCampaigns = this.filterEligibleCampaigns(
       allCampaigns,
       context.isHighIntent
     );
+    this.metricsService.recordRtbStage(
+      'match_filter_eligible',
+      'ok',
+      this.elapsedMs(filterEligibleStartedAt)
+    );
+    this.metricsService.observeRtbEligibleCampaignCount(
+      eligibleCampaigns.length
+    );
 
     if (eligibleCampaigns.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
       this.logger.debug('비딩 가능한 캠페인이 없습니다.');
       return [];
     }
 
     let requestEmbedding: number[];
+    const requestEmbeddingStartedAt = process.hrtime.bigint();
     try {
       // 요청 임베딩은 모든 캠페인 비교에서 공통으로 사용되므로 한 번만 계산합니다.
       requestEmbedding = await this.getEmbeddingCached(requestText);
+      this.metricsService.recordRtbStage(
+        'match_get_request_embedding',
+        'ok',
+        this.elapsedMs(requestEmbeddingStartedAt)
+      );
       // requestEmbedding = await this.mlEngine.getEmbedding(requestText);
     } catch (error) {
+      this.metricsService.recordRtbStage(
+        'match_get_request_embedding',
+        'error',
+        this.elapsedMs(requestEmbeddingStartedAt)
+      );
+      this.metricsService.incRtbFallback('embedding_error');
       this.logger.warn('요청 태그 임베딩 생성에 실패했습니다.', error as Error);
       return [];
     }
@@ -85,17 +116,32 @@ export class TransformerMatcher extends Matcher {
     // 자격 있는 캠페인과 스코어 계산 (0~1)
     // - Promise.all(대량)로 한 번에 태스크를 쌓으면, 대규모 캠페인에서 메모리/마이크로태스크 오버헤드가 커질 수 있음, 게다가 여기서 굳이 Promise.all 쓸 이유없음
     //   순차 계산 + 임계값 통과 케이스만 후보로 유지
+    const scoreLoopStartedAt = process.hrtime.bigint();
     const candidates: Candidate[] = [];
-    for (const campaign of eligibleCampaigns) {
-      const similarity = await this.scoreCampaignByTags(
-        requestEmbedding,
-        requestNorm,
-        requestTokens,
-        campaign
-      );
-      if (similarity >= this.SIMILARITY_THRESHOLD) {
-        candidates.push({ campaign, similarity });
+    try {
+      for (const campaign of eligibleCampaigns) {
+        const similarity = await this.scoreCampaignByTags(
+          requestEmbedding,
+          requestNorm,
+          requestTokens,
+          campaign
+        );
+        if (similarity >= this.SIMILARITY_THRESHOLD) {
+          candidates.push({ campaign, similarity });
+        }
       }
+      this.metricsService.recordRtbStage(
+        'match_score_loop',
+        'ok',
+        this.elapsedMs(scoreLoopStartedAt)
+      );
+    } catch (error) {
+      this.metricsService.recordRtbStage(
+        'match_score_loop',
+        'error',
+        this.elapsedMs(scoreLoopStartedAt)
+      );
+      throw error;
     }
 
     this.logger.debug(
@@ -190,6 +236,10 @@ export class TransformerMatcher extends Matcher {
   private clamp01(n: number): number {
     if (Number.isNaN(n)) return 0;
     return Math.max(0, Math.min(1, n));
+  }
+
+  private elapsedMs(startedAt: bigint): number {
+    return Number(process.hrtime.bigint() - startedAt) / 1_000_000;
   }
 
   private async getEmbeddingCached(text: string): Promise<number[]> {
