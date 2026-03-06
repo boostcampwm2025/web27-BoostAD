@@ -41,7 +41,9 @@ export class CampaignCronService {
     try {
       // 0. Redis에서 한번만 로드
       const cachedCampaigns =
-        await this.campaignCacheRepository.getAllCampaigns({ allowStale: false });
+        await this.campaignCacheRepository.getAllCampaigns({
+          allowStale: false,
+        });
       this.logger.log(`Redis 캠페인 ${cachedCampaigns.length}개 로드`);
 
       // 1. 종료일 지난 캠페인 ENDED (Redis First) - 비딩 차단 최우선
@@ -206,8 +208,9 @@ export class CampaignCronService {
     orphanImagesDeleted: number;
   }> {
     this.logger.log('수동 Lazy Reset 시작');
-    const cachedCampaigns =
-      await this.campaignCacheRepository.getAllCampaigns({ allowStale: false });
+    const cachedCampaigns = await this.campaignCacheRepository.getAllCampaigns({
+      allowStale: false,
+    });
 
     const stopped = await this.stopExpiredCampaigns(cachedCampaigns);
     const paused = await this.pauseOverspentCampaigns(cachedCampaigns);

@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Matcher } from './matchers/matcher.interface';
 import { Scorer } from './scorers/scorer.interface';
 import { CampaignSelector } from './selectors/selector.interface';
@@ -61,6 +61,8 @@ export class RTBService {
         this.matcher.findCandidatesByTags(context)
       );
 
+      // -------- 여기부터 병목 후보 ------------------
+
       // 2. 선제적 Spent 증가
       candidates = await this.measureStage('reserve', () =>
         this.increaseSpentCandidates(candidates)
@@ -102,7 +104,6 @@ export class RTBService {
           'fallback'
         );
       }
-
       // 3. 점수 계산 (아 복잡하다)
       this.metricsService.observeRtbCandidateCount(candidates.length);
       const scored: ScoredCandidate[] = await this.measureStage('score', () =>
@@ -276,7 +277,9 @@ export class RTBService {
       )
     );
   }
-
+  /**
+   * 예산증액에 성공한 캠페인들 반환
+   */
   private async increaseSpentCandidates(candidates: Candidate[]) {
     const eligibleCandidates: Candidate[] = [];
 
@@ -285,41 +288,28 @@ export class RTBService {
         this.limit(async () => {
           const { campaign } = candidate;
           const dependencyStartedAt = process.hrtime.bigint();
-          try {
-            const reserved = await this.campaignCacheRepository.incrementSpent(
-              campaign.id,
-              campaign.maxCpc,
-              campaign.dailyBudget,
-              campaign.totalBudget
-            );
+          const reserved = await this.campaignCacheRepository.incrementSpent(
+            campaign.id,
+            campaign.maxCpc,
+            campaign.dailyBudget,
+            campaign.totalBudget
+          );
 
-            this.metricsService.recordDependency(
-              'redis',
-              'increment_spent',
-              reserved ? 'ok' : 'rejected',
-              this.elapsedMs(dependencyStartedAt)
-            );
+          this.metricsService.recordDependency(
+            'redis',
+            'increment_spent',
+            reserved ? 'ok' : 'rejected',
+            this.elapsedMs(dependencyStartedAt)
+          );
 
-            if (reserved == true) {
-              eligibleCandidates.push(candidate);
-            } else {
-              this.metricsService.incRtbReservationFailure('rejected');
-              if (this.logsEnabled) {
-                this.logger.debug(
-                  `캠페인 ${campaign.id} 예산 확보 실패 - 후보에서 제외`
-                );
-              }
-            }
-          } catch (error) {
-            this.metricsService.recordDependency(
-              'redis',
-              'increment_spent',
-              'error',
-              this.elapsedMs(dependencyStartedAt)
-            );
-            this.metricsService.incRtbReservationFailure('error');
+          if (reserved) {
+            eligibleCandidates.push(candidate);
+          } else {
+            this.metricsService.incRtbReservationFailure('rejected');
             if (this.logsEnabled) {
-              this.logger.warn(`캠페인 ${campaign.id} 후보에서 제외`, error);
+              this.logger.debug(
+                `캠페인 ${campaign.id} 예산 확보 실패 - 후보에서 제외`
+              );
             }
           }
         })

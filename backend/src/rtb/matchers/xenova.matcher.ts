@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Matcher } from './matcher.interface';
 import { CampaignCacheRepository } from '../../campaign/repository/campaign.cache.repository.interface';
 import { MLEngine } from '../ml/mlEngine.interface';
@@ -9,6 +9,7 @@ import {
   createRtbPathLogger,
   rtbPathLogsEnabled,
 } from '../../common/logging/rtb-path-logger.util';
+
 @Injectable()
 export class TransformerMatcher extends Matcher {
   private readonly logger = createRtbPathLogger(TransformerMatcher.name);
@@ -50,7 +51,7 @@ export class TransformerMatcher extends Matcher {
   }
 
   /**
-   * Redis에 저장된 캠페인 데이터들을 바탕으로 Active, IsHighIntent, 날짜 범위, 백테 유사도 비교값을 기반으로 후보 캠페인들 반환
+   * Redis에 저장된 캠페인 데이터들을 바탕으로 Active, IsHighIntent, 날짜 범위, 백테 유사도 비교값을 기반으로 후보 캠페인들 반환(예산 검증X)
    * @param context
    * @returns
    */
