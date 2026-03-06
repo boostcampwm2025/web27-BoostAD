@@ -12,6 +12,10 @@ import { BlogRepository } from '../../blog/repository/blog.repository.interface'
 import { BlogCacheRepository } from '../../blog/repository/blog.cache.repository.interface';
 import type { BlogEntity } from '../../blog/entities/blog.entity';
 import type { CachedBlog } from '../../blog/types/blog.type';
+import {
+  createRtbPathLogger,
+  rtbPathLogsEnabled,
+} from '../logging/rtb-path-logger.util';
 
 // Guard에서 첨부하는 blog 정보 (캐시 or DB 엔티티)
 export type BlogInfo = BlogEntity | CachedBlog;
@@ -31,7 +35,8 @@ function normalizeHostname(hostname: string): string {
 
 @Injectable()
 export class BlogKeyValidationGuard implements CanActivate {
-  private readonly logger = new Logger(BlogKeyValidationGuard.name);
+  private readonly logger = createRtbPathLogger(BlogKeyValidationGuard.name);
+  private readonly logsEnabled = rtbPathLogsEnabled();
 
   constructor(
     private readonly blogRepository: BlogRepository,
@@ -49,18 +54,22 @@ export class BlogKeyValidationGuard implements CanActivate {
 
     // blogKey 누락 체크
     if (!blogKey) {
-      this.logger.warn('blogKey 누락된 요청 시도', {
-        ip: request.ip,
-        url: request.url,
-      });
+      if (this.logsEnabled) {
+        this.logger.warn('blogKey 누락된 요청 시도', {
+          ip: request.ip,
+          url: request.url,
+        });
+      }
       throw new BadRequestException('blogKey가 필요합니다.');
     }
 
     if (!postUrl) {
-      this.logger.warn('postUrl 누락된 요청 시도', {
-        ip: request.ip,
-        url: request.url,
-      });
+      if (this.logsEnabled) {
+        this.logger.warn('postUrl 누락된 요청 시도', {
+          ip: request.ip,
+          url: request.url,
+        });
+      }
       throw new BadRequestException('postUrl이 필요합니다.');
     }
 
@@ -79,26 +88,32 @@ export class BlogKeyValidationGuard implements CanActivate {
 
       // 2. 캐시 미스 시 DB fallback
       if (!blog) {
-        this.logger.debug(`blogKey 캐시 미스, DB 조회: ${blogKey}`);
+        if (this.logsEnabled) {
+          this.logger.debug(`blogKey 캐시 미스, DB 조회: ${blogKey}`);
+        }
         blog = await this.blogRepository.findByBlogKey(blogKey);
       }
     } catch (error) {
-      this.logger.error('blogKey 조회 중 오류 발생', {
-        blogKey,
-        error: error instanceof Error ? error.message : String(error),
-      });
+      if (this.logsEnabled) {
+        this.logger.error('blogKey 조회 중 오류 발생', {
+          blogKey,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
       throw new InternalServerErrorException(
         '블로그 정보 조회 중 오류가 발생했습니다.'
       );
     }
 
     if (!blog) {
-      this.logger.warn('미등록 blogKey 요청 차단', {
-        blogKey,
-        ip: request.ip,
-        url: request.url,
-        timestamp: new Date().toISOString(),
-      });
+      if (this.logsEnabled) {
+        this.logger.warn('미등록 blogKey 요청 차단', {
+          blogKey,
+          ip: request.ip,
+          url: request.url,
+          timestamp: new Date().toISOString(),
+        });
+      }
       throw new ForbiddenException(
         '등록되지 않은 blogKey입니다. 관리자에게 문의하세요.'
       );
@@ -109,15 +124,17 @@ export class BlogKeyValidationGuard implements CanActivate {
     const normalizedBlogDomain = normalizeHostname(domain);
 
     if (normalizedRequestDomain !== normalizedBlogDomain) {
-      this.logger.warn('blogKey 도메인 불일치', {
-        blogKey,
-        requestDomain,
-        blogDomain: domain,
-        normalizedRequestDomain,
-        normalizedBlogDomain,
-        ip: request.ip,
-        url: request.url,
-      });
+      if (this.logsEnabled) {
+        this.logger.warn('blogKey 도메인 불일치', {
+          blogKey,
+          requestDomain,
+          blogDomain: domain,
+          normalizedRequestDomain,
+          normalizedBlogDomain,
+          ip: request.ip,
+          url: request.url,
+        });
+      }
       throw new ForbiddenException(
         '요청 도메인이 blogKey의 도메인과 일치하지 않습니다.'
       );
@@ -131,7 +148,9 @@ export class BlogKeyValidationGuard implements CanActivate {
     // 요청 객체에 blog 정보 첨부 (후속 로직에서 사용 가능)
     request.blog = blog;
 
-    this.logger.log(`blogKey 검증 성공: ${blogKey} (${blog.name})`);
+    if (this.logsEnabled) {
+      this.logger.log(`blogKey 검증 성공: ${blogKey} (${blog.name})`);
+    }
     return true;
   }
 }

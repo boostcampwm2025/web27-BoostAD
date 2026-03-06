@@ -10,10 +10,17 @@ import {
   REDIS_DECREMENT_SPENT_SCRIPT,
   REDIS_INCREMENT_SPENT_SCRIPT,
 } from '../scripts/lua-script';
+import {
+  createRtbPathLogger,
+  rtbPathLogsEnabled,
+} from '../../common/logging/rtb-path-logger.util';
 
 @Injectable()
 export class RedisCampaignCacheRepository implements CampaignCacheRepository {
-  private readonly logger = new Logger(RedisCampaignCacheRepository.name);
+  private readonly logger = createRtbPathLogger(
+    RedisCampaignCacheRepository.name
+  );
+  private readonly logsEnabled = rtbPathLogsEnabled();
   private readonly KEY_PREFIX = 'campaign:';
   private readonly CAMPAIGN_KEYS_SET = 'campaign:keys';
   private readonly CAMPAIGN_CACHE_TTL = 60 * 60 * 24;
@@ -183,18 +190,28 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       )) as number;
 
       if (result === 1) {
-        this.logger.debug(
-          `캠페인 ${campaignId} Spent 증가 성공: +${cpc} (일일/총)`
-        );
+        if (this.logsEnabled) {
+          this.logger.debug(
+            `캠페인 ${campaignId} Spent 증가 성공: +${cpc} (일일/총)`
+          );
+        }
         return true;
       }
 
       if (result === 0) {
-        this.logger.debug(`캠페인 ${campaignId} 일일 예산 초과로 증가 실패`);
+        if (this.logsEnabled) {
+          this.logger.debug(`캠페인 ${campaignId} 일일 예산 초과로 증가 실패`);
+        }
       } else if (result === -1) {
-        this.logger.debug(`캠페인 ${campaignId} 총 예산 초과로 증가 실패`);
+        if (this.logsEnabled) {
+          this.logger.debug(`캠페인 ${campaignId} 총 예산 초과로 증가 실패`);
+        }
       } else {
-        this.logger.warn(`캠페인 ${campaignId} 캐시 없음 (result: ${result})`);
+        if (this.logsEnabled) {
+          this.logger.warn(
+            `캠페인 ${campaignId} 캐시 없음 (result: ${result})`
+          );
+        }
       }
 
       return false;
@@ -216,19 +233,27 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       )) as number;
 
       if (result === 1) {
-        this.logger.debug(
-          `캠페인 ${campaignId} Spent 롤백 완료: -${cpc} (일일/총)`
-        );
+        if (this.logsEnabled) {
+          this.logger.debug(
+            `캠페인 ${campaignId} Spent 롤백 완료: -${cpc} (일일/총)`
+          );
+        }
       } else if (result === 0) {
-        this.logger.warn(
-          `캠페인 ${campaignId} 일일 Spent 음수 방지 (현재값 < ${cpc})`
-        );
+        if (this.logsEnabled) {
+          this.logger.warn(
+            `캠페인 ${campaignId} 일일 Spent 음수 방지 (현재값 < ${cpc})`
+          );
+        }
       } else if (result === -1) {
-        this.logger.warn(
-          `캠페인 ${campaignId} 총 Spent 음수 방지 (현재값 < ${cpc})`
-        );
+        if (this.logsEnabled) {
+          this.logger.warn(
+            `캠페인 ${campaignId} 총 Spent 음수 방지 (현재값 < ${cpc})`
+          );
+        }
       } else if (result === -99) {
-        this.logger.error(`캠페인 ${campaignId} 캐시 없음 (롤백 실패)`);
+        if (this.logsEnabled) {
+          this.logger.error(`캠페인 ${campaignId} 캐시 없음 (롤백 실패)`);
+        }
       }
     } catch (error) {
       this.logger.error(`캠페인 ${campaignId} Spent 롤백 실패`, error);

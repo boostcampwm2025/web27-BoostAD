@@ -35,13 +35,14 @@ services:
       REDIS_HOST: ${REDIS_HOST:-localhost}
       REDIS_PORT: ${REDIS_PORT:-6379}
       TOSS_SECRET_KEY: ${TOSS_SECRET_KEY}
+      RTB_ENABLE_ALL_LOGS: ${RTB_ENABLE_ALL_LOGS:-false}
     expose:
       - '3000'
     restart: unless-stopped
 
   backend-worker:
     image: ${NCR_ENDPOINT:-local}/boostad/backend:${IMAGE_TAG:-deploy}
-    command: ['node', 'dist/worker.main.js']
+    command: [ 'node', 'dist/worker.main.js' ]
     environment:
       # Worker는 HTTP 서버를 띄우지 않고 BullMQ Consumer만 실행합니다.
       NODE_ENV: ${NODE_ENV:-development}

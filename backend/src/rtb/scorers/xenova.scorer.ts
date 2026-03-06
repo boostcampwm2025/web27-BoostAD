@@ -2,10 +2,15 @@ import { Injectable, Logger } from '@nestjs/common';
 import { Scorer } from './scorer.interface';
 // import { MLEngine } from '../ml/mlEngine.interface';
 import type { Candidate, ScoredCandidate } from '../types/decision.types';
+import {
+  createRtbPathLogger,
+  rtbPathLogsEnabled,
+} from '../../common/logging/rtb-path-logger.util';
 
 @Injectable()
 export class TransformerScorer extends Scorer {
-  private readonly logger = new Logger(TransformerScorer.name);
+  private readonly logger = createRtbPathLogger(TransformerScorer.name);
+  private readonly logsEnabled = rtbPathLogsEnabled();
 
   // 점수 공식 가중치 (설정으로 분리)
   private readonly CPC_WEIGHT = 0.3;
@@ -37,12 +42,14 @@ export class TransformerScorer extends Scorer {
     const similarityScore = similarity * 100 * this.SIMILARITY_WEIGHT;
     const finalScore = cpcScore + similarityScore;
 
-    this.logger.debug(
-      `Campaign ${campaign.id}: ` +
-        `CPC=${cpc}(${cpcScore.toFixed(1)}점), ` +
-        `Similarity=${similarity.toFixed(3)}(${similarityScore.toFixed(1)}점), ` +
-        `Total=${finalScore.toFixed(1)}점`
-    );
+    if (this.logsEnabled) {
+      this.logger.debug(
+        `Campaign ${campaign.id}: ` +
+          `CPC=${cpc}(${cpcScore.toFixed(1)}점), ` +
+          `Similarity=${similarity.toFixed(3)}(${similarityScore.toFixed(1)}점), ` +
+          `Total=${finalScore.toFixed(1)}점`
+      );
+    }
 
     return Promise.resolve({
       ...campaign,

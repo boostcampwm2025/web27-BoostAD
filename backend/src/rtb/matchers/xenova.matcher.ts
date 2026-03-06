@@ -5,9 +5,14 @@ import { MLEngine } from '../ml/mlEngine.interface';
 import type { Candidate, DecisionContext } from '../types/decision.types';
 import type { CachedCampaign } from '../../campaign/types/campaign.types';
 import { MetricsService } from '../../metrics/metrics.service';
+import {
+  createRtbPathLogger,
+  rtbPathLogsEnabled,
+} from '../../common/logging/rtb-path-logger.util';
 @Injectable()
 export class TransformerMatcher extends Matcher {
-  private readonly logger = new Logger(TransformerMatcher.name);
+  private readonly logger = createRtbPathLogger(TransformerMatcher.name);
+  private readonly logsEnabled = rtbPathLogsEnabled();
 
   // 최종 매칭 점수(0~1) 임계값
   private readonly SIMILARITY_THRESHOLD = 0.3;
@@ -53,7 +58,9 @@ export class TransformerMatcher extends Matcher {
     // ML 모델 준비 안 됐으면 빈 배열 반환 (Scorer에서 태그 매칭으로 커버 예정)
     if (!this.mlEngine.isReady()) {
       this.metricsService.incRtbFallback('matcher_empty');
-      this.logger.warn('ML 모델이 준비가 안 되었습니다.');
+      if (this.logsEnabled) {
+        this.logger.warn('ML 모델이 준비가 안 되었습니다.');
+      }
       return [];
     }
 
@@ -87,7 +94,9 @@ export class TransformerMatcher extends Matcher {
 
     if (eligibleCampaigns.length === 0) {
       this.metricsService.incRtbFallback('matcher_empty');
-      this.logger.debug('비딩 가능한 캠페인이 없습니다.');
+      if (this.logsEnabled) {
+        this.logger.debug('비딩 가능한 캠페인이 없습니다.');
+      }
       return [];
     }
 
@@ -109,7 +118,12 @@ export class TransformerMatcher extends Matcher {
         this.elapsedMs(requestEmbeddingStartedAt)
       );
       this.metricsService.incRtbFallback('embedding_error');
-      this.logger.warn('요청 태그 임베딩 생성에 실패했습니다.', error as Error);
+      if (this.logsEnabled) {
+        this.logger.warn(
+          '요청 태그 임베딩 생성에 실패했습니다.',
+          error as Error
+        );
+      }
       return [];
     }
 
@@ -144,9 +158,11 @@ export class TransformerMatcher extends Matcher {
       throw error;
     }
 
-    this.logger.debug(
-      `필터링된 캠페인 수 ${candidates.length}/${allCampaigns.length} 캠페인의 유사도 (임계값: ${this.SIMILARITY_THRESHOLD})`
-    );
+    if (this.logsEnabled) {
+      this.logger.debug(
+        `필터링된 캠페인 수 ${candidates.length}/${allCampaigns.length} 캠페인의 유사도 (임계값: ${this.SIMILARITY_THRESHOLD})`
+      );
+    }
 
     return candidates;
   }
@@ -316,9 +332,11 @@ export class TransformerMatcher extends Matcher {
         } else {
           // 없으면 새로 생성 (fallback)
           tagEmbedding = await this.getEmbeddingCached(tagName);
-          this.logger.debug(
-            `Redis 캐시 미스 - 태그 임베딩 새로 생성: "${tagName}" (campaign=${campaign.id})`
-          );
+          if (this.logsEnabled) {
+            this.logger.debug(
+              `Redis 캐시 미스 - 태그 임베딩 새로 생성: "${tagName}" (campaign=${campaign.id})`
+            );
+          }
         }
 
         sims.push(
@@ -326,10 +344,12 @@ export class TransformerMatcher extends Matcher {
         );
       } catch (error) {
         // 특정 태그 임베딩이 실패해도 전체 캠페인을 버리진 않고, 해당 태그만 스킵합니다.
-        this.logger.debug(
-          `태그 임베딩 실패로 스킵: "${tagName}" (campaign=${campaign.id})`,
-          error as Error
-        );
+        if (this.logsEnabled) {
+          this.logger.debug(
+            `태그 임베딩 실패로 스킵: "${tagName}" (campaign=${campaign.id})`,
+            error as Error
+          );
+        }
       }
     }
 

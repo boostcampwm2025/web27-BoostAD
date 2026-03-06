@@ -29,6 +29,7 @@ services:
       NCP_ENDPOINT: ${NCP_ENDPOINT:-https://kr.object.ncloudstorage.com}
       NCP_BUCKET: ${NCP_BUCKET:-boostadad-campaign-images}
       TOSS_SECRET_KEY: ${TOSS_SECRET_KEY:-}
+      RTB_ENABLE_ALL_LOGS: ${RTB_ENABLE_ALL_LOGS:-false}
     depends_on:
       - mysql
       - redis

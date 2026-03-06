@@ -17,10 +17,15 @@ import { BlogRepository } from '../blog/repository/blog.repository.interface';
 import { CampaignCacheRepository } from '../campaign/repository/campaign.cache.repository.interface';
 import pLimit from 'p-limit';
 import { MetricsService } from '../metrics/metrics.service';
+import {
+  createRtbPathLogger,
+  rtbPathLogsEnabled,
+} from '../common/logging/rtb-path-logger.util';
 
 @Injectable()
 export class RTBService {
-  private readonly logger = new Logger(RTBService.name);
+  private readonly logger = createRtbPathLogger(RTBService.name);
+  private readonly logsEnabled = rtbPathLogsEnabled();
   private readonly FALLBACK_CAMPAIGN_ID =
     'c1dda7a5-da58-416b-b8fa-20ba8f5535f9';
   private readonly BATCH_LIMIT = 10;
@@ -65,9 +70,11 @@ export class RTBService {
       if (candidates.length === 0) {
         fallbackUsed = true;
         this.metricsService.incRtbFallback('no_candidates');
-        this.logger.warn(
-          `후보가 없습니다. Fallback 캠페인 조회: ${this.FALLBACK_CAMPAIGN_ID}`
-        );
+        if (this.logsEnabled) {
+          this.logger.warn(
+            `후보가 없습니다. Fallback 캠페인 조회: ${this.FALLBACK_CAMPAIGN_ID}`
+          );
+        }
 
         candidates = await this.measureStage(
           'fallback_lookup',
@@ -123,7 +130,6 @@ export class RTBService {
       );
 
       // 7. BidLog 저장 (모든 참여 캠페인의 입찰 기록)
-      // --------------------------------------------------------------------------------------------------------------------------------------
       // TODO(추후 고려 사항): 속성값 고민 및 reason 필드에 대한 고민 그리고 로그 데이터는 RedisStream으로 큐를 통한 배치처리가 고려되면 좋을 거 같음
       const bidLogs: BidLog[] = result.candidates.map((candidate) => ({
         auctionId,
@@ -150,12 +156,14 @@ export class RTBService {
         ])
       );
 
-      this.logger.log(
-        `Auction ${auctionId}: ${bidLogs.length}개 BidLog 저장 완료 (WIN: ${result.winner.id})`
-      );
+      if (this.logsEnabled) {
+        this.logger.log(
+          `Auction ${auctionId}: ${bidLogs.length}개 BidLog 저장 완료 (WIN: ${result.winner.id})`
+        );
+      }
 
       // SSE: 입찰 이벤트 발행 (모든 BidLog에 대해)
-
+      // measureStage가 두번째 인자로 Promise를 반환하는 함수를 필요로 하므로 콜백은 async로 선언함
       await this.measureStage('emit_sse', async () => {
         for (const bid of savedBids) {
           const meta = campaignMetaById.get(bid.campaignId);
@@ -191,7 +199,9 @@ export class RTBService {
       requestResult = 'error';
       totalOutcome = 'error';
 
-      this.logger.warn(`Auction 실패: ${errorMessage}`);
+      if (this.logsEnabled) {
+        this.logger.warn(`Auction 실패: ${errorMessage}`);
+      }
 
       // 에러 발생 시(예: 후보 없음) null winner와 빈 리스트를 반환하여 정상 응답 처리
 
@@ -243,9 +253,11 @@ export class RTBService {
               'ok',
               this.elapsedMs(dependencyStartedAt)
             );
-            this.logger.debug(
-              `Auction ${auctionId}: 패배 캠페인 ${loser.id} Spent 롤백 완료`
-            );
+            if (this.logsEnabled) {
+              this.logger.debug(
+                `Auction ${auctionId}: 패배 캠페인 ${loser.id} Spent 롤백 완료`
+              );
+            }
           } catch (error) {
             this.metricsService.recordDependency(
               'redis',
@@ -253,10 +265,12 @@ export class RTBService {
               'error',
               this.elapsedMs(dependencyStartedAt)
             );
-            this.logger.warn(
-              `Auction ${auctionId}: 패배 캠페인 ${loser.id} Spent 롤백 실패`,
-              error
-            );
+            if (this.logsEnabled) {
+              this.logger.warn(
+                `Auction ${auctionId}: 패배 캠페인 ${loser.id} Spent 롤백 실패`,
+                error
+              );
+            }
           }
         })
       )
@@ -290,9 +304,11 @@ export class RTBService {
               eligibleCandidates.push(candidate);
             } else {
               this.metricsService.incRtbReservationFailure('rejected');
-              this.logger.debug(
-                `캠페인 ${campaign.id} 예산 확보 실패 - 후보에서 제외`
-              );
+              if (this.logsEnabled) {
+                this.logger.debug(
+                  `캠페인 ${campaign.id} 예산 확보 실패 - 후보에서 제외`
+                );
+              }
             }
           } catch (error) {
             this.metricsService.recordDependency(
@@ -302,7 +318,9 @@ export class RTBService {
               this.elapsedMs(dependencyStartedAt)
             );
             this.metricsService.incRtbReservationFailure('error');
-            this.logger.warn(`캠페인 ${campaign.id} 후보에서 제외`, error);
+            if (this.logsEnabled) {
+              this.logger.warn(`캠페인 ${campaign.id} 후보에서 제외`, error);
+            }
           }
         })
       )
