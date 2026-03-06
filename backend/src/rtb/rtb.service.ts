@@ -104,7 +104,7 @@ export class RTBService {
           'fallback'
         );
       }
-      // 3. 점수 계산 (아 복잡하다)
+      // 3. 유사도 점수 계산
       this.metricsService.observeRtbCandidateCount(candidates.length);
       const scored: ScoredCandidate[] = await this.measureStage('score', () =>
         this.scorer.scoreCandidates(candidates)
@@ -144,12 +144,14 @@ export class RTBService {
         postUrl: context.postUrl,
         reason: '', // 추후에 수정 필요
       }));
+
       this.metricsService.observeRtbBidLogCount(bidLogs.length);
       const savedBids = await this.measureStage('save_bidlog', () =>
         this.measureDependency('mysql', 'save_bid_logs', () =>
           this.bidLogRepository.saveMany(bidLogs)
         )
       );
+
       const campaignMetaById = new Map(
         result.candidates.map((candidate) => [
           candidate.id,
