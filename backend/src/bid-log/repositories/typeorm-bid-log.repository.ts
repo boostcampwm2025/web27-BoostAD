@@ -20,9 +20,11 @@ export class TypeOrmBidLogRepository extends BidLogRepository {
   }
 
   async save(bidLog: BidLog): Promise<void> {
-    await this.repository.save(bidLog);
+    // await this.repository.save(bidLog);
+    await this.repository.insert(bidLog);
   }
 
+  // Insert를 사용하면 저장된 결과값을 리턴해주지않으므로 save를 사용해야함
   async saveMany(bidLogs: BidLog[]): Promise<BidLog[]> {
     return await this.repository.save(bidLogs);
   }
