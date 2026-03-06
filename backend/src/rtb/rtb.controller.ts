@@ -14,6 +14,7 @@ import {
 import { Public } from '../auth/decorators/public.decorator';
 import { type Response } from 'express';
 import { randomUUID } from 'crypto';
+import { MetricsService } from '../metrics/metrics.service';
 
 @Controller('sdk')
 @Public()
@@ -21,7 +22,10 @@ import { randomUUID } from 'crypto';
 export class RTBController {
   private readonly logger = new Logger(RTBController.name);
 
-  constructor(private readonly rtbService: RTBService) {}
+  constructor(
+    private readonly rtbService: RTBService,
+    private readonly metricsService: MetricsService
+  ) {}
 
   @Post('decision')
   async getDecision(
@@ -29,6 +33,9 @@ export class RTBController {
     @Req() req: BlogKeyValidatedRequest,
     @Res({ passthrough: true }) res: Response
   ) {
+    const requestPayloadBytes = Buffer.byteLength(JSON.stringify(body), 'utf8');
+    this.metricsService.observeRtbPayload('request', requestPayloadBytes);
+
     const visitorId = req.visitorId;
 
     if (!visitorId) {
@@ -65,8 +72,16 @@ export class RTBController {
     });
 
     // Expose 데코레이터가 붙은 속성만 포함하여 DTO 인스턴스로 변환
-    return plainToInstance(RTBResponseDto, result, {
+    const responseDto = plainToInstance(RTBResponseDto, result, {
       excludeExtraneousValues: true,
     });
+
+    const responsePayloadBytes = Buffer.byteLength(
+      JSON.stringify(responseDto),
+      'utf8'
+    );
+    this.metricsService.observeRtbPayload('response', responsePayloadBytes);
+
+    return responseDto;
   }
 }

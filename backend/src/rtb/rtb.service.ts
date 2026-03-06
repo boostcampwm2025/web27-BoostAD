@@ -16,6 +16,7 @@ import { BidLog, BidStatus } from '../bid-log/bid-log.types';
 import { BlogRepository } from '../blog/repository/blog.repository.interface';
 import { CampaignCacheRepository } from '../campaign/repository/campaign.cache.repository.interface';
 import pLimit from 'p-limit';
+import { MetricsService } from '../metrics/metrics.service';
 
 @Injectable()
 export class RTBService {
@@ -33,10 +34,16 @@ export class RTBService {
     private readonly bidLogService: BidLogService,
     private readonly cacheRepository: CacheRepository,
     private readonly blogRepository: BlogRepository,
-    private readonly campaignCacheRepository: CampaignCacheRepository
+    private readonly campaignCacheRepository: CampaignCacheRepository,
+    private readonly metricsService: MetricsService
   ) {}
 
   async runAuction(context: DecisionContext) {
+    const totalStartedAt = process.hrtime.bigint();
+    let requestResult: 'success' | 'error' | 'fallback' = 'success';
+    let totalOutcome: 'ok' | 'error' | 'fallback' = 'ok';
+    let fallbackUsed = false;
+
     try {
       const auctionId = randomUUID();
 
@@ -45,51 +52,75 @@ export class RTBService {
 
       // 1. 후보 불러오기 및 필터링
       // TODO(추후 고려 사항): 여기서도 embedding, deleteAt,active, isHighIntent 속성 반환이 필요한가? -> 아 bidLog기록을 위해서는 isHighIntent 속성은 필요할 거 같음
-      let candidates: Candidate[] =
-        await this.matcher.findCandidatesByTags(context);
+      let candidates: Candidate[] = await this.measureStage('match', () =>
+        this.matcher.findCandidatesByTags(context)
+      );
 
       // 2. 선제적 Spent 증가
-      candidates = await this.increaseSpentCandidates(candidates);
+      candidates = await this.measureStage('reserve', () =>
+        this.increaseSpentCandidates(candidates)
+      );
 
       // 후보가 없으면 fallback 캠페인 조회 (캐시에서)
       if (candidates.length === 0) {
+        fallbackUsed = true;
+        this.metricsService.incRtbFallback('no_candidates');
         this.logger.warn(
           `후보가 없습니다. Fallback 캠페인 조회: ${this.FALLBACK_CAMPAIGN_ID}`
         );
 
-        // TODO: 캠페인 개수가 많아지면 O(N)이라 병목 예상
-        const fallbackCampaign =
-          await this.campaignCacheRepository.findCampaignCacheById(
-            this.FALLBACK_CAMPAIGN_ID
-          );
+        candidates = await this.measureStage(
+          'fallback_lookup',
+          async () => {
+            const fallbackCampaign = await this.measureDependency(
+              'redis',
+              'find_fallback_campaign',
+              () =>
+                this.campaignCacheRepository.findCampaignCacheById(
+                  this.FALLBACK_CAMPAIGN_ID
+                )
+            );
 
-        if (fallbackCampaign) {
-          candidates = [
-            {
-              campaign: fallbackCampaign,
-              similarity: 0,
-            },
-          ];
-        } else {
-          throw new Error('Fallback 캠페인을 찾을 수 없습니다');
-        }
+            if (!fallbackCampaign) {
+              throw new Error('Fallback 캠페인을 찾을 수 없습니다');
+            }
+
+            return [
+              {
+                campaign: fallbackCampaign,
+                similarity: 0,
+              },
+            ];
+          },
+          'fallback'
+        );
       }
 
       // 3. 점수 계산 (아 복잡하다)
-      const scored: ScoredCandidate[] =
-        await this.scorer.scoreCandidates(candidates);
+      this.metricsService.observeRtbCandidateCount(candidates.length);
+      const scored: ScoredCandidate[] = await this.measureStage('score', () =>
+        this.scorer.scoreCandidates(candidates)
+      );
 
       // 4. 경매에 참여한 캠페인들에 대해 승자 도출, 전체결과 반환
-      const result = await this.selector.selectWinner(scored);
+      const result = await this.measureStage('select', () =>
+        this.selector.selectWinner(scored)
+      );
 
       // 5. 패배한 캠페인들의 Spent 롤백
-      await this.rollbackLosersSpent(auctionId, result);
+      await this.measureStage('rollback', () =>
+        this.rollbackLosersSpent(auctionId, result)
+      );
 
       // 6. AuctionStore에 경매 데이터 저장 (ViewLog에서 조회용)
-      await this.cacheRepository.setAuctionData(auctionId, {
-        blogId: blogId,
-        cost: result.winner.maxCpc,
-      });
+      await this.measureStage('cache_auction', () =>
+        this.measureDependency('redis', 'set_auction_data', () =>
+          this.cacheRepository.setAuctionData(auctionId, {
+            blogId: blogId,
+            cost: result.winner.maxCpc,
+          })
+        )
+      );
 
       // 7. BidLog 저장 (모든 참여 캠페인의 입찰 기록)
       // --------------------------------------------------------------------------------------------------------------------------------------
@@ -106,7 +137,12 @@ export class RTBService {
         postUrl: context.postUrl,
         reason: '', // 추후에 수정 필요
       }));
-      const savedBids = await this.bidLogRepository.saveMany(bidLogs);
+      this.metricsService.observeRtbBidLogCount(bidLogs.length);
+      const savedBids = await this.measureStage('save_bidlog', () =>
+        this.measureDependency('mysql', 'save_bid_logs', () =>
+          this.bidLogRepository.saveMany(bidLogs)
+        )
+      );
       const campaignMetaById = new Map(
         result.candidates.map((candidate) => [
           candidate.id,
@@ -120,18 +156,23 @@ export class RTBService {
 
       // SSE: 입찰 이벤트 발행 (모든 BidLog에 대해)
 
-      for (const bid of savedBids) {
-        const meta = campaignMetaById.get(bid.campaignId);
-        this.bidLogService.emitBidCreated({
-          log: bid,
-          userId: meta?.userId ?? 0,
-          campaignTitle: meta?.campaignTitle ?? 'Unknown Campaign',
-          blogKey: context.blogKey,
-          blogName: context.blogName,
-          winAmount: result.winner.maxCpc,
-        });
-      }
+      await this.measureStage('emit_sse', async () => {
+        for (const bid of savedBids) {
+          const meta = campaignMetaById.get(bid.campaignId);
+          this.bidLogService.emitBidCreated({
+            log: bid,
+            userId: meta?.userId ?? 0,
+            campaignTitle: meta?.campaignTitle ?? 'Unknown Campaign',
+            blogKey: context.blogKey,
+            blogName: context.blogName,
+            winAmount: result.winner.maxCpc,
+          });
+        }
+      });
       // --------------------------------------------------------------------------------------------------------------------------------------
+
+      requestResult = fallbackUsed ? 'fallback' : 'success';
+      totalOutcome = fallbackUsed ? 'fallback' : 'ok';
 
       return {
         status: 'success',
@@ -146,6 +187,9 @@ export class RTBService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
+
+      requestResult = 'error';
+      totalOutcome = 'error';
 
       this.logger.warn(`Auction 실패: ${errorMessage}`);
 
@@ -164,6 +208,13 @@ export class RTBService {
         ],
         timestamp: new Date().toISOString(),
       };
+    } finally {
+      this.metricsService.recordRtbStage(
+        'total',
+        totalOutcome,
+        this.elapsedMs(totalStartedAt)
+      );
+      this.metricsService.recordRtbRequest(requestResult, context.isHighIntent);
     }
   }
 
@@ -179,15 +230,29 @@ export class RTBService {
     await Promise.allSettled(
       losers.map((loser) =>
         this.limit(async () => {
+          const dependencyStartedAt = process.hrtime.bigint();
+
           try {
             await this.campaignCacheRepository.decrementSpent(
               loser.id,
               loser.maxCpc
             );
+            this.metricsService.recordDependency(
+              'redis',
+              'decrement_spent',
+              'ok',
+              this.elapsedMs(dependencyStartedAt)
+            );
             this.logger.debug(
               `Auction ${auctionId}: 패배 캠페인 ${loser.id} Spent 롤백 완료`
             );
           } catch (error) {
+            this.metricsService.recordDependency(
+              'redis',
+              'decrement_spent',
+              'error',
+              this.elapsedMs(dependencyStartedAt)
+            );
             this.logger.warn(
               `Auction ${auctionId}: 패배 캠페인 ${loser.id} Spent 롤백 실패`,
               error
@@ -205,6 +270,7 @@ export class RTBService {
       candidates.map((candidate) =>
         this.limit(async () => {
           const { campaign } = candidate;
+          const dependencyStartedAt = process.hrtime.bigint();
           try {
             const reserved = await this.campaignCacheRepository.incrementSpent(
               campaign.id,
@@ -213,14 +279,29 @@ export class RTBService {
               campaign.totalBudget
             );
 
+            this.metricsService.recordDependency(
+              'redis',
+              'increment_spent',
+              reserved ? 'ok' : 'rejected',
+              this.elapsedMs(dependencyStartedAt)
+            );
+
             if (reserved == true) {
               eligibleCandidates.push(candidate);
             } else {
+              this.metricsService.incRtbReservationFailure('rejected');
               this.logger.debug(
                 `캠페인 ${campaign.id} 예산 확보 실패 - 후보에서 제외`
               );
             }
           } catch (error) {
+            this.metricsService.recordDependency(
+              'redis',
+              'increment_spent',
+              'error',
+              this.elapsedMs(dependencyStartedAt)
+            );
+            this.metricsService.incRtbReservationFailure('error');
             this.logger.warn(`캠페인 ${campaign.id} 후보에서 제외`, error);
           }
         })
@@ -228,6 +309,62 @@ export class RTBService {
     );
 
     return eligibleCandidates;
+  }
+
+  private elapsedMs(startedAt: bigint): number {
+    return Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+  }
+
+  private async measureStage<T>(
+    stage: string,
+    fn: () => Promise<T>,
+    successOutcome: 'ok' | 'fallback' = 'ok'
+  ): Promise<T> {
+    const startedAt = process.hrtime.bigint();
+
+    try {
+      const result = await fn();
+      this.metricsService.recordRtbStage(
+        stage,
+        successOutcome,
+        this.elapsedMs(startedAt)
+      );
+      return result;
+    } catch (error) {
+      this.metricsService.recordRtbStage(
+        stage,
+        'error',
+        this.elapsedMs(startedAt)
+      );
+      throw error;
+    }
+  }
+
+  private async measureDependency<T>(
+    dependency: string,
+    operation: string,
+    fn: () => Promise<T>
+  ): Promise<T> {
+    const startedAt = process.hrtime.bigint();
+
+    try {
+      const result = await fn();
+      this.metricsService.recordDependency(
+        dependency,
+        operation,
+        'ok',
+        this.elapsedMs(startedAt)
+      );
+      return result;
+    } catch (error) {
+      this.metricsService.recordDependency(
+        dependency,
+        operation,
+        'error',
+        this.elapsedMs(startedAt)
+      );
+      throw error;
+    }
   }
 
   // cache 문제로 인한 무의미한 주석
