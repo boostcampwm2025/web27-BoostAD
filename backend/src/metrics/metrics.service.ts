@@ -1,4 +1,6 @@
 import { Injectable } from '@nestjs/common';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
 import {
   Counter,
   Registry,
@@ -16,6 +18,7 @@ type RtbPayloadLabel = 'direction';
 type DependencyLabel = 'dependency' | 'operation' | 'outcome';
 type BidLogPubSubMessageLabel = 'result';
 type BidLogPubSubEventLabel = 'result';
+type QueueJobLabel = 'queue' | 'state';
 
 @Injectable()
 export class MetricsService {
@@ -154,7 +157,17 @@ export class MetricsService {
     registers: [this.registry],
   });
 
-  constructor() {
+  private readonly queueJobs = new Gauge<QueueJobLabel>({
+    name: 'boostad_queue_jobs',
+    help: 'BullMQ queue state별 job 수',
+    labelNames: ['queue', 'state'],
+    registers: [this.registry],
+  });
+
+  constructor(
+    @InjectQueue('bidlog-queue')
+    private readonly bidlogQueue: Queue
+  ) {
     collectDefaultMetrics({
       register: this.registry,
       prefix: 'boostad_backend_',
@@ -277,6 +290,29 @@ export class MetricsService {
   }
 
   async getMetrics(): Promise<string> {
+    await this.refreshQueueMetrics();
     return await this.registry.metrics(); // 레지스트리에 등록된 모든 메트릭 텍스트로 직렬화해서 리턴
+  }
+
+  private async refreshQueueMetrics(): Promise<void> {
+    const counts = await this.bidlogQueue.getJobCounts(
+      'waiting',
+      'active',
+      'delayed',
+      'prioritized',
+      'paused',
+      'completed',
+      'failed'
+    );
+
+    const queueName = this.bidlogQueue.name;
+    const entries = Object.entries(counts) as Array<[string, number]>;
+
+    for (const [state, count] of entries) {
+      this.queueJobs.set(
+        { queue: queueName, state },
+        Number.isFinite(count) ? count : 0
+      );
+    }
   }
 }
