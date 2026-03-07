@@ -22,7 +22,7 @@ export interface SaveBidLogProps {
   items: BidLogJobItemData[];
 }
 
-@Processor('bidlog-queue')
+@Processor('bidlog-queue', { concurrency: 8 })
 export class SaveBidlogWorker extends WorkerHost {
   private readonly logger = new Logger(SaveBidlogWorker.name);
 
