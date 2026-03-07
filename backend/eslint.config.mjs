@@ -31,7 +31,7 @@ export default tseslint.config(
       '@typescript-eslint/no-unsafe-argument': 'warn',
       '@typescript-eslint/no-unsafe-assignment': 'warn', // 추가
       '@typescript-eslint/no-unsafe-call': 'warn', // 추가
-      'prettier/prettier': ['error', { endOfLine: 'auto' }],
+      'prettier/prettier': ['off', { endOfLine: 'auto' }],
     },
   },
   {
