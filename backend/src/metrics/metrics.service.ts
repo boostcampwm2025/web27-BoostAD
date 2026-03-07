@@ -2,11 +2,11 @@ import { Injectable } from '@nestjs/common';
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import {
-  Counter,
-  Registry,
-  Histogram,
   collectDefaultMetrics,
+  Counter,
   Gauge,
+  Histogram,
+  Registry,
 } from 'prom-client';
 
 type HttpLabel = 'method' | 'route' | 'status_code';
@@ -134,14 +134,13 @@ export class MetricsService {
       registers: [this.registry],
     });
 
-  private readonly bidlogPubSubEventsTotal = new Counter<BidLogPubSubEventLabel>(
-    {
+  private readonly bidlogPubSubEventsTotal =
+    new Counter<BidLogPubSubEventLabel>({
       name: 'boostad_bidlog_pubsub_events_total',
       help: 'BidLog pub/sub 이벤트 처리 수',
       labelNames: ['result'],
       registers: [this.registry],
-    }
-  );
+    });
 
   private readonly bidlogPubSubBatchSize = new Histogram({
     name: 'boostad_bidlog_pubsub_batch_size',
@@ -191,10 +190,7 @@ export class MetricsService {
     outcome: 'ok' | 'error' | 'fallback',
     durationMs: number
   ) {
-    this.rtbStageDurationSeconds.observe(
-      { stage, outcome },
-      durationMs / 1000
-    );
+    this.rtbStageDurationSeconds.observe({ stage, outcome }, durationMs / 1000);
   }
 
   recordRtbRequest(
@@ -246,7 +242,9 @@ export class MetricsService {
     this.dependencyDurationSeconds.observe(labels, durationMs / 1000);
   }
 
-  incBidlogPubSubMessage(result: 'received' | 'parse_error' | 'invalid_format') {
+  incBidlogPubSubMessage(
+    result: 'received' | 'parse_error' | 'invalid_format'
+  ) {
     this.bidlogPubSubMessagesTotal.inc({ result });
   }
 
@@ -306,7 +304,7 @@ export class MetricsService {
     );
 
     const queueName = this.bidlogQueue.name;
-    const entries = Object.entries(counts) as Array<[string, number]>;
+    const entries = Object.entries(counts);
 
     for (const [state, count] of entries) {
       this.queueJobs.set(
