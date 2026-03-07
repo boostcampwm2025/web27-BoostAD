@@ -1,11 +1,9 @@
 import { NestFactory } from '@nestjs/core';
-import { BidlogWorkerAppModule } from './bidlogworker/bidlog-worker.app.module';
+import { BidlogWorkerModule } from './bidlogworker/bidlog-worker.module';
 
 async function bootstrap() {
   try {
-    const app = await NestFactory.createApplicationContext(
-      BidlogWorkerAppModule
-    );
+    const app = await NestFactory.createApplicationContext(BidlogWorkerModule);
     app.enableShutdownHooks();
     console.log('BidLog Worker 부트스트랩 성공');
   } catch (error) {
