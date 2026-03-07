@@ -8,6 +8,7 @@ import { BidLogRepository } from '../bid-log/repositories/bid-log.repository.int
 import { TypeOrmBidLogRepository } from '../bid-log/repositories/typeorm-bid-log.repository';
 import { BidLogEntity } from '../bid-log/entities/bid-log.entity';
 import { getTypeOrmConfig } from '../config/typeorm.config';
+import { MetricsModule } from '../metrics/metrics.module';
 
 @Module({
   imports: [
@@ -19,6 +20,7 @@ import { getTypeOrmConfig } from '../config/typeorm.config';
     }),
     QueueModule,
     RedisModule,
+    MetricsModule,
     TypeOrmModule.forFeature([BidLogEntity]),
   ],
   providers: [

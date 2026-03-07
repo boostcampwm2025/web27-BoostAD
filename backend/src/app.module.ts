@@ -22,6 +22,7 @@ import { RedisModule } from './redis/redis.module';
 import { PaymentModule } from './payment/payment.module';
 import { PublisherModule } from './publisher/publisher.module';
 import { MetricsModule } from './metrics/metrics.module';
+import { LoadtestModule } from './loadtest/loadtest.module';
 
 @Module({
   imports: [
@@ -57,6 +58,7 @@ import { MetricsModule } from './metrics/metrics.module';
     PaymentModule,
     PublisherModule,
     MetricsModule,
+    LoadtestModule,
     // QueueModule,
   ],
   controllers: [],

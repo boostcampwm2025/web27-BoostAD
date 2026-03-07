@@ -11,6 +11,7 @@ import {
 import { type AppIORedisClient } from '../redis/redis.type';
 import { IOREDIS_CLIENT } from '../redis/redis.constant';
 import { BID_LOG_CREATED_CHANNEL } from '../bid-log/bid-log.constants';
+import { MetricsService } from '../metrics/metrics.service';
 
 export interface SaveBidLogProps {
   auctionId: string;
@@ -27,6 +28,7 @@ export class SaveBidlogWorker extends WorkerHost {
 
   constructor(
     private readonly bidLogRepository: BidLogRepository,
+    private readonly metricsService: MetricsService,
     @Inject(IOREDIS_CLIENT)
     private readonly ioRedisClient: AppIORedisClient
   ) {
@@ -38,14 +40,18 @@ export class SaveBidlogWorker extends WorkerHost {
       const { auctionId, blogId, isHighIntent, behaviorScore, items } =
         job.data;
 
-      const saveBids = await this.saveBidLog({
-        auctionId,
-        blogId,
-        isHighIntent,
-        behaviorScore,
-        postUrl: job.data.postUrl,
-        items,
-      });
+      const saveBids = await this.measureStage('save_bidlog', () =>
+        this.measureDependency('mysql', 'save_bid_logs', () =>
+          this.saveBidLog({
+            auctionId,
+            blogId,
+            isHighIntent,
+            behaviorScore,
+            postUrl: job.data.postUrl,
+            items,
+          })
+        )
+      );
 
       const message = this.buildPubSubMessage(saveBids, job.data);
 
@@ -114,5 +120,60 @@ export class SaveBidlogWorker extends WorkerHost {
     });
 
     return { events };
+  }
+
+  private async measureStage<T>(
+    stage: string,
+    work: () => Promise<T>
+  ): Promise<T> {
+    const startedAt = process.hrtime.bigint();
+
+    try {
+      const result = await work();
+      this.metricsService.recordRtbStage(
+        stage,
+        'ok',
+        this.elapsedMs(startedAt)
+      );
+      return result;
+    } catch (error) {
+      this.metricsService.recordRtbStage(
+        stage,
+        'error',
+        this.elapsedMs(startedAt)
+      );
+      throw error;
+    }
+  }
+
+  private async measureDependency<T>(
+    dependency: string,
+    operation: string,
+    work: () => Promise<T>
+  ): Promise<T> {
+    const startedAt = process.hrtime.bigint();
+
+    try {
+      const result = await work();
+      this.metricsService.recordDependency(
+        dependency,
+        operation,
+        'ok',
+        this.elapsedMs(startedAt)
+      );
+      return result;
+    } catch (error) {
+      this.metricsService.recordDependency(
+        dependency,
+        operation,
+        'error',
+        this.elapsedMs(startedAt)
+      );
+      throw error;
+    }
+  }
+
+  private elapsedMs(startedAt: bigint): number {
+    return Number(process.hrtime.bigint() - startedAt) / 1_000_000;
   }
 }

@@ -3,11 +3,16 @@ import { BidLogRepository } from '../bid-log/repositories/bid-log.repository.int
 import { BID_LOG_CREATED_CHANNEL } from '../bid-log/bid-log.constants';
 import { BidStatus } from '../bid-log/bid-log.types';
 import type { BidLogJobData } from '../queue/types/queue.type';
+import { MetricsService } from '../metrics/metrics.service';
 
 describe('SaveBidlogWorker', () => {
   let worker: SaveBidlogWorker;
   let bidLogRepository: { saveMany: jest.Mock };
   let ioRedisClient: { publish: jest.Mock };
+  let metricsService: {
+    recordRtbStage: jest.Mock;
+    recordDependency: jest.Mock;
+  };
 
   beforeEach(() => {
     bidLogRepository = {
@@ -16,9 +21,14 @@ describe('SaveBidlogWorker', () => {
     ioRedisClient = {
       publish: jest.fn().mockResolvedValue(1),
     };
+    metricsService = {
+      recordRtbStage: jest.fn(),
+      recordDependency: jest.fn(),
+    };
 
     worker = new SaveBidlogWorker(
       bidLogRepository as unknown as BidLogRepository,
+      metricsService as unknown as MetricsService,
       ioRedisClient as never
     );
   });
@@ -115,6 +125,17 @@ describe('SaveBidlogWorker', () => {
 
     expect(ioRedisClient.publish).toHaveBeenCalledTimes(1);
     expect(ioRedisClient.publish.mock.calls[0][0]).toBe(BID_LOG_CREATED_CHANNEL);
+    expect(metricsService.recordDependency).toHaveBeenCalledWith(
+      'mysql',
+      'save_bid_logs',
+      'ok',
+      expect.any(Number)
+    );
+    expect(metricsService.recordRtbStage).toHaveBeenCalledWith(
+      'save_bidlog',
+      'ok',
+      expect.any(Number)
+    );
 
     const message = JSON.parse(ioRedisClient.publish.mock.calls[0][1]) as {
       events: Array<{

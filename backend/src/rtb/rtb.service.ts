@@ -170,44 +170,8 @@ export class RTBService {
         })),
       };
 
+      this.metricsService.observeRtbBidLogCount(bidLogJob.items.length);
       await this.bidlogQueue.add('save-bidlog', bidLogJob);
-
-      // this.metricsService.observeRtbBidLogCount(bidLogs.length);
-      // const savedBids = await this.measureStage('save_bidlog', () =>
-      //   this.measureDependency('mysql', 'save_bid_logs', () =>
-      //     this.bidLogRepository.saveMany(bidLogs)
-      //   )
-      // );
-
-      // const campaignMetaById = new Map(
-      //   result.candidates.map((candidate) => [
-      //     candidate.id,
-      //     { userId: candidate.userId, campaignTitle: candidate.title },
-      //   ])
-      // );
-
-      // if (this.logsEnabled) {
-      //   this.logger.log(
-      //     `Auction ${auctionId}: ${bidLogs.length}개 BidLog 저장 완료 (WIN: ${result.winner.id})`
-      //   );
-      // }
-
-      // SSE: 입찰 이벤트 발행 (모든 BidLog에 대해)
-      // measureStage가 두번째 인자로 Promise를 반환하는 함수를 필요로 하므로 콜백은 async로 선언함
-      // await this.measureStage('emit_sse', async () => {
-      //   for (const bid of savedBids) {
-      //     const meta = campaignMetaById.get(bid.campaignId);
-      //     this.bidLogService.emitBidCreated({
-      //       log: bid,
-      //       userId: meta?.userId ?? 0,
-      //       campaignTitle: meta?.campaignTitle ?? 'Unknown Campaign',
-      //       blogKey: context.blogKey,
-      //       blogName: context.blogName,
-      //       winAmount: result.winner.maxCpc,
-      //     });
-      //   }
-      // });
-      // --------------------------------------------------------------------------------------------------------------------------------------
 
       requestResult = fallbackUsed ? 'fallback' : 'success';
       totalOutcome = fallbackUsed ? 'fallback' : 'ok';
