@@ -12,7 +12,7 @@ import { randomUUID } from 'crypto';
 import { BidLogRepository } from '../bid-log/repositories/bid-log.repository.interface';
 import { BidLogService } from '../bid-log/bid-log.service';
 import { CacheRepository } from '../cache/repository/cache.repository.interface';
-import { BidLog, BidStatus } from '../bid-log/bid-log.types';
+import { BidStatus } from '../bid-log/bid-log.types';
 import { BlogRepository } from '../blog/repository/blog.repository.interface';
 import { CampaignCacheRepository } from '../campaign/repository/campaign.cache.repository.interface';
 import pLimit from 'p-limit';
@@ -21,6 +21,9 @@ import {
   createRtbPathLogger,
   rtbPathLogsEnabled,
 } from '../common/logging/rtb-path-logger.util';
+import { InjectQueue } from '@nestjs/bullmq';
+import { Queue } from 'bullmq';
+import { BidLogJobData } from '../queue/types/queue.type';
 
 @Injectable()
 export class RTBService {
@@ -40,7 +43,9 @@ export class RTBService {
     private readonly cacheRepository: CacheRepository,
     private readonly blogRepository: BlogRepository,
     private readonly campaignCacheRepository: CampaignCacheRepository,
-    private readonly metricsService: MetricsService
+    private readonly metricsService: MetricsService,
+    @InjectQueue('bidlog-queue')
+    private readonly bidlogQueue: Queue<BidLogJobData>
   ) {}
 
   async runAuction(context: DecisionContext) {
@@ -132,54 +137,76 @@ export class RTBService {
 
       // 7. BidLog 저장 (모든 참여 캠페인의 입찰 기록)
       // TODO(추후 고려 사항): 속성값 고민 및 reason 필드에 대한 고민 그리고 로그 데이터는 RedisStream으로 큐를 통한 배치처리가 고려되면 좋을 거 같음
-      const bidLogs: BidLog[] = result.candidates.map((candidate) => ({
+      // const bidLogs: BidLog[] = result.candidates.map((candidate) => ({
+      //   auctionId,
+      //   campaignId: candidate.id,
+      //   blogId: blogId,
+      //   status:
+      //     candidate.id === result.winner.id ? BidStatus.WIN : BidStatus.LOSS,
+      //   bidPrice: candidate.maxCpc,
+      //   isHighIntent: context.isHighIntent,
+      //   behaviorScore: context.behaviorScore,
+      //   postUrl: context.postUrl,
+      //   reason: '', // 추후에 수정 필요
+      // }));
+
+      const bidLogJob: BidLogJobData = {
         auctionId,
-        campaignId: candidate.id,
         blogId: blogId,
-        status:
-          candidate.id === result.winner.id ? BidStatus.WIN : BidStatus.LOSS,
-        bidPrice: candidate.maxCpc,
         isHighIntent: context.isHighIntent,
         behaviorScore: context.behaviorScore,
         postUrl: context.postUrl,
-        reason: '', // 추후에 수정 필요
-      }));
+        blogKey: context.blogKey,
+        blogName: context.blogName,
+        winAmount: result.winner.maxCpc,
+        items: result.candidates.map((candidate) => ({
+          campaignId: candidate.id,
+          status:
+            candidate.id === result.winner.id ? BidStatus.WIN : BidStatus.LOSS,
+          bidPrice: candidate.maxCpc,
+          reason: '', // 추후에 수정 필요
+          userId: candidate.userId,
+          campaignTitle: candidate.title,
+        })),
+      };
 
-      this.metricsService.observeRtbBidLogCount(bidLogs.length);
-      const savedBids = await this.measureStage('save_bidlog', () =>
-        this.measureDependency('mysql', 'save_bid_logs', () =>
-          this.bidLogRepository.saveMany(bidLogs)
-        )
-      );
+      await this.bidlogQueue.add('save-bidlog', bidLogJob);
 
-      const campaignMetaById = new Map(
-        result.candidates.map((candidate) => [
-          candidate.id,
-          { userId: candidate.userId, campaignTitle: candidate.title },
-        ])
-      );
+      // this.metricsService.observeRtbBidLogCount(bidLogs.length);
+      // const savedBids = await this.measureStage('save_bidlog', () =>
+      //   this.measureDependency('mysql', 'save_bid_logs', () =>
+      //     this.bidLogRepository.saveMany(bidLogs)
+      //   )
+      // );
 
-      if (this.logsEnabled) {
-        this.logger.log(
-          `Auction ${auctionId}: ${bidLogs.length}개 BidLog 저장 완료 (WIN: ${result.winner.id})`
-        );
-      }
+      // const campaignMetaById = new Map(
+      //   result.candidates.map((candidate) => [
+      //     candidate.id,
+      //     { userId: candidate.userId, campaignTitle: candidate.title },
+      //   ])
+      // );
+
+      // if (this.logsEnabled) {
+      //   this.logger.log(
+      //     `Auction ${auctionId}: ${bidLogs.length}개 BidLog 저장 완료 (WIN: ${result.winner.id})`
+      //   );
+      // }
 
       // SSE: 입찰 이벤트 발행 (모든 BidLog에 대해)
       // measureStage가 두번째 인자로 Promise를 반환하는 함수를 필요로 하므로 콜백은 async로 선언함
-      await this.measureStage('emit_sse', async () => {
-        for (const bid of savedBids) {
-          const meta = campaignMetaById.get(bid.campaignId);
-          this.bidLogService.emitBidCreated({
-            log: bid,
-            userId: meta?.userId ?? 0,
-            campaignTitle: meta?.campaignTitle ?? 'Unknown Campaign',
-            blogKey: context.blogKey,
-            blogName: context.blogName,
-            winAmount: result.winner.maxCpc,
-          });
-        }
-      });
+      // await this.measureStage('emit_sse', async () => {
+      //   for (const bid of savedBids) {
+      //     const meta = campaignMetaById.get(bid.campaignId);
+      //     this.bidLogService.emitBidCreated({
+      //       log: bid,
+      //       userId: meta?.userId ?? 0,
+      //       campaignTitle: meta?.campaignTitle ?? 'Unknown Campaign',
+      //       blogKey: context.blogKey,
+      //       blogName: context.blogName,
+      //       winAmount: result.winner.maxCpc,
+      //     });
+      //   }
+      // });
       // --------------------------------------------------------------------------------------------------------------------------------------
 
       requestResult = fallbackUsed ? 'fallback' : 'success';

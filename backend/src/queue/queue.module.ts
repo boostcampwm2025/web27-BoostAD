@@ -15,9 +15,14 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
       }),
       inject: [ConfigService],
     }),
-    BullModule.registerQueue({
-      name: 'embedding-queue',
-    }),
+    BullModule.registerQueue(
+      {
+        name: 'embedding-queue',
+      },
+      {
+        name: 'bidlog-queue',
+      }
+    ),
   ],
   exports: [BullModule],
 })
