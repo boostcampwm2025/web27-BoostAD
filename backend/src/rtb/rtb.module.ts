@@ -29,14 +29,22 @@ import { RTBController } from './rtb.controller';
 // Cache (AuctionStore 사용을 위해)
 import { CacheModule } from '../cache/cache.module';
 
-// BidLog
 import { BidLogModule } from '../bid-log/bid-log.module';
 
-// Blog
 import { BlogModule } from '../blog/blog.module';
+import { MetricsModule } from '../metrics/metrics.module';
+
+import { QueueModule } from '../queue/queue.module';
 
 @Module({
-  imports: [CacheModule, BidLogModule, CampaignModule, BlogModule],
+  imports: [
+    CacheModule,
+    BidLogModule,
+    CampaignModule,
+    BlogModule,
+    MetricsModule,
+    QueueModule,
+  ],
   controllers: [RTBController],
   providers: [
     RTBService,

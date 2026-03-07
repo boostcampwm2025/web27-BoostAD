@@ -3,10 +3,11 @@ import { IOREDIS_CLIENT } from 'src/redis/redis.constant';
 import type { AppIORedisClient } from 'src/redis/redis.type';
 import { BlogCacheRepository } from './blog.cache.repository.interface';
 import { CachedBlog } from '../types/blog.type';
+import { createRtbPathLogger } from '../../common/logging/rtb-path-logger.util';
 
 @Injectable()
 export class BlogRedisCacheRepository implements BlogCacheRepository {
-  private readonly logger = new Logger(BlogRedisCacheRepository.name);
+  private readonly logger = createRtbPathLogger(BlogRedisCacheRepository.name);
   private readonly BLOG_CACHE_TTL = 60 * 60 * 24 * 7; // 7일
   private readonly BLOG_EXISTS_SET = 'blog:exists:set';
   private readonly KEY_PREFIX = 'blog:';

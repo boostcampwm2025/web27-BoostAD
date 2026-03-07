@@ -1,10 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { CampaignSelector } from './selector.interface';
 import type { ScoredCandidate, SelectionResult } from '../types/decision.types';
+import {
+  createRtbPathLogger,
+  rtbPathLogsEnabled,
+} from '../../common/logging/rtb-path-logger.util';
 
 @Injectable()
 export class PrototypeCampaignSelector implements CampaignSelector {
-  private readonly logger = new Logger(PrototypeCampaignSelector.name);
+  private readonly logger = createRtbPathLogger(PrototypeCampaignSelector.name);
+  private readonly logsEnabled = rtbPathLogsEnabled();
 
   async selectWinner(candidates: ScoredCandidate[]): Promise<SelectionResult> {
     // 점수 내림차순 정렬 (동점자 비교)
@@ -30,7 +35,7 @@ export class PrototypeCampaignSelector implements CampaignSelector {
       (c) => c.score === topScore && c.maxCpc === topCpc
     );
 
-    if (fullyTiedCandidates.length > 1) {
+    if (this.logsEnabled && fullyTiedCandidates.length > 1) {
       this.logger.debug(
         `완전 동점 캠페인 ${fullyTiedCandidates.length}개 발견 ` +
           `(점수: ${topScore?.toFixed(1)}점, CPC: ${topCpc}원) - ` +

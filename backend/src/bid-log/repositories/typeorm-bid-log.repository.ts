@@ -20,26 +20,25 @@ export class TypeOrmBidLogRepository extends BidLogRepository {
   }
 
   async save(bidLog: BidLog): Promise<void> {
-    await this.repository.save(bidLog);
+    // await this.repository.save(bidLog);
+    await this.repository.insert(bidLog);
   }
 
+  // Insert를 사용하면 저장된 결과값을 리턴해주지않으므로 save를 사용해야함
   async saveMany(bidLogs: BidLog[]): Promise<BidLog[]> {
-    const result = await this.repository.save(bidLogs);
-    return result;
+    return await this.repository.save(bidLogs);
   }
 
   async findByAuctionId(auctionId: string): Promise<BidLog[]> {
-    const logs = await this.repository.find({
+    return await this.repository.find({
       where: { auctionId },
     });
-    return logs;
   }
 
   async findByCampaignId(campaignId: string): Promise<BidLog[]> {
-    const logs = await this.repository.find({
+    return await this.repository.find({
       where: { campaignId },
     });
-    return logs;
   }
 
   async findWinAmountByAuctionId(auctionId: string): Promise<number | null> {
@@ -54,8 +53,7 @@ export class TypeOrmBidLogRepository extends BidLogRepository {
   }
 
   async getAll(): Promise<BidLog[]> {
-    const logs = await this.repository.find();
-    return logs;
+    return await this.repository.find();
   }
 
   async findByUserId(

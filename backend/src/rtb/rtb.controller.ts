@@ -14,14 +14,23 @@ import {
 import { Public } from '../auth/decorators/public.decorator';
 import { type Response } from 'express';
 import { randomUUID } from 'crypto';
+import { MetricsService } from '../metrics/metrics.service';
+import {
+  createRtbPathLogger,
+  rtbPathLogsEnabled,
+} from '../common/logging/rtb-path-logger.util';
 
 @Controller('sdk')
 @Public()
 @UseGuards(BlogKeyValidationGuard)
 export class RTBController {
-  private readonly logger = new Logger(RTBController.name);
+  private readonly logger = createRtbPathLogger(RTBController.name);
+  private readonly logsEnabled = rtbPathLogsEnabled();
 
-  constructor(private readonly rtbService: RTBService) {}
+  constructor(
+    private readonly rtbService: RTBService,
+    private readonly metricsService: MetricsService
+  ) {}
 
   @Post('decision')
   async getDecision(
@@ -29,6 +38,9 @@ export class RTBController {
     @Req() req: BlogKeyValidatedRequest,
     @Res({ passthrough: true }) res: Response
   ) {
+    const requestPayloadBytes = Buffer.byteLength(JSON.stringify(body), 'utf8');
+    this.metricsService.observeRtbPayload('request', requestPayloadBytes);
+
     const visitorId = req.visitorId;
 
     if (!visitorId) {
@@ -53,20 +65,30 @@ export class RTBController {
 
     const result = await this.rtbService.runAuction(context);
 
-    result.data?.candidates?.forEach((candidate) => {
-      const eachCandidateLog = {
-        id: candidate.id,
-        title: candidate.title.slice(0, 10) + '...',
-        tags: candidate.tags,
-        score: candidate.score,
-      };
+    if (this.logsEnabled) {
+      result.data?.candidates?.forEach((candidate) => {
+        const eachCandidateLog = {
+          id: candidate.id,
+          title: candidate.title.slice(0, 10) + '...',
+          tags: candidate.tags,
+          score: candidate.score,
+        };
 
-      this.logger.log(JSON.stringify(eachCandidateLog));
-    });
+        this.logger.log(JSON.stringify(eachCandidateLog));
+      });
+    }
 
     // Expose 데코레이터가 붙은 속성만 포함하여 DTO 인스턴스로 변환
-    return plainToInstance(RTBResponseDto, result, {
+    const responseDto = plainToInstance(RTBResponseDto, result, {
       excludeExtraneousValues: true,
     });
+
+    const responsePayloadBytes = Buffer.byteLength(
+      JSON.stringify(responseDto),
+      'utf8'
+    );
+    this.metricsService.observeRtbPayload('response', responsePayloadBytes);
+
+    return responseDto;
   }
 }

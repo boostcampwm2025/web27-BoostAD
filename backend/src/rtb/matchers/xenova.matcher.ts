@@ -1,12 +1,19 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable } from '@nestjs/common';
 import { Matcher } from './matcher.interface';
 import { CampaignCacheRepository } from '../../campaign/repository/campaign.cache.repository.interface';
 import { MLEngine } from '../ml/mlEngine.interface';
 import type { Candidate, DecisionContext } from '../types/decision.types';
 import type { CachedCampaign } from '../../campaign/types/campaign.types';
+import { MetricsService } from '../../metrics/metrics.service';
+import {
+  createRtbPathLogger,
+  rtbPathLogsEnabled,
+} from '../../common/logging/rtb-path-logger.util';
+
 @Injectable()
 export class TransformerMatcher extends Matcher {
-  private readonly logger = new Logger(TransformerMatcher.name);
+  private readonly logger = createRtbPathLogger(TransformerMatcher.name);
+  private readonly logsEnabled = rtbPathLogsEnabled();
 
   // 최종 매칭 점수(0~1) 임계값
   private readonly SIMILARITY_THRESHOLD = 0.3;
@@ -37,20 +44,24 @@ export class TransformerMatcher extends Matcher {
 
   constructor(
     private readonly campaignCacheRepo: CampaignCacheRepository,
-    private readonly mlEngine: MLEngine
+    private readonly mlEngine: MLEngine,
+    private readonly metricsService: MetricsService
   ) {
     super();
   }
 
   /**
-   * Redis에 저장된 캠페인 데이터들을 바탕으로 Active, IsHighIntent, 날짜 범위, 백테 유사도 비교값을 기반으로 후보 캠페인들 반환
+   * Redis에 저장된 캠페인 데이터들을 바탕으로 Active, IsHighIntent, 날짜 범위, 백테 유사도 비교값을 기반으로 후보 캠페인들 반환(예산 검증X)
    * @param context
    * @returns
    */
   async findCandidatesByTags(context: DecisionContext): Promise<Candidate[]> {
     // ML 모델 준비 안 됐으면 빈 배열 반환 (Scorer에서 태그 매칭으로 커버 예정)
     if (!this.mlEngine.isReady()) {
-      this.logger.warn('ML 모델이 준비가 안 되었습니다.');
+      this.metricsService.incRtbFallback('matcher_empty');
+      if (this.logsEnabled) {
+        this.logger.warn('ML 모델이 준비가 안 되었습니다.');
+      }
       return [];
     }
 
@@ -59,48 +70,100 @@ export class TransformerMatcher extends Matcher {
     const requestTokens = new Set(this.tokenizeText(requestText));
 
     // Redis에서 모든 캠페인 조회 (캐시 우선 전략)
+    const getAllCampaignsStartedAt = process.hrtime.bigint();
     const allCampaigns = await this.campaignCacheRepo.getAllCampaigns();
+    this.metricsService.recordRtbStage(
+      'match_get_all_campaigns',
+      'ok',
+      this.elapsedMs(getAllCampaignsStartedAt)
+    );
 
     // 비딩 자격 필터링: ACTIVE + 날짜 범위 + deletedAt + embeddingTags + isHighIntent 존재
+    const filterEligibleStartedAt = process.hrtime.bigint();
     const eligibleCampaigns = this.filterEligibleCampaigns(
       allCampaigns,
       context.isHighIntent
     );
+    this.metricsService.recordRtbStage(
+      'match_filter_eligible',
+      'ok',
+      this.elapsedMs(filterEligibleStartedAt)
+    );
+    this.metricsService.observeRtbEligibleCampaignCount(
+      eligibleCampaigns.length
+    );
 
     if (eligibleCampaigns.length === 0) {
-      this.logger.debug('비딩 가능한 캠페인이 없습니다.');
+      this.metricsService.incRtbFallback('matcher_empty');
+      if (this.logsEnabled) {
+        this.logger.debug('비딩 가능한 캠페인이 없습니다.');
+      }
       return [];
     }
 
     let requestEmbedding: number[];
+    const requestEmbeddingStartedAt = process.hrtime.bigint();
     try {
       // 요청 임베딩은 모든 캠페인 비교에서 공통으로 사용되므로 한 번만 계산합니다.
       requestEmbedding = await this.getEmbeddingCached(requestText);
+      this.metricsService.recordRtbStage(
+        'match_get_request_embedding',
+        'ok',
+        this.elapsedMs(requestEmbeddingStartedAt)
+      );
       // requestEmbedding = await this.mlEngine.getEmbedding(requestText);
     } catch (error) {
-      this.logger.warn('요청 태그 임베딩 생성에 실패했습니다.', error as Error);
+      this.metricsService.recordRtbStage(
+        'match_get_request_embedding',
+        'error',
+        this.elapsedMs(requestEmbeddingStartedAt)
+      );
+      this.metricsService.incRtbFallback('embedding_error');
+      if (this.logsEnabled) {
+        this.logger.warn(
+          '요청 태그 임베딩 생성에 실패했습니다.',
+          error as Error
+        );
+      }
       return [];
     }
 
     // 자격 있는 캠페인과 스코어 계산 (0~1)
     // - Promise.all(대량)로 한 번에 태스크를 쌓으면, 대규모 캠페인에서 메모리/마이크로태스크 오버헤드가 커질 수 있음, 게다가 여기서 굳이 Promise.all 쓸 이유없음
     //   순차 계산 + 임계값 통과 케이스만 후보로 유지
+    const scoreLoopStartedAt = process.hrtime.bigint();
     const candidates: Candidate[] = [];
-    for (const campaign of eligibleCampaigns) {
-      const similarity = await this.scoreCampaignByTags(
-        requestEmbedding,
-        requestNorm,
-        requestTokens,
-        campaign
-      );
-      if (similarity >= this.SIMILARITY_THRESHOLD) {
-        candidates.push({ campaign, similarity });
+    try {
+      for (const campaign of eligibleCampaigns) {
+        const similarity = await this.scoreCampaignByTags(
+          requestEmbedding,
+          requestNorm,
+          requestTokens,
+          campaign
+        );
+        if (similarity >= this.SIMILARITY_THRESHOLD) {
+          candidates.push({ campaign, similarity });
+        }
       }
+      this.metricsService.recordRtbStage(
+        'match_score_loop',
+        'ok',
+        this.elapsedMs(scoreLoopStartedAt)
+      );
+    } catch (error) {
+      this.metricsService.recordRtbStage(
+        'match_score_loop',
+        'error',
+        this.elapsedMs(scoreLoopStartedAt)
+      );
+      throw error;
     }
 
-    this.logger.debug(
-      `필터링된 캠페인 수 ${candidates.length}/${allCampaigns.length} 캠페인의 유사도 (임계값: ${this.SIMILARITY_THRESHOLD})`
-    );
+    if (this.logsEnabled) {
+      this.logger.debug(
+        `필터링된 캠페인 수 ${candidates.length}/${allCampaigns.length} 캠페인의 유사도 (임계값: ${this.SIMILARITY_THRESHOLD})`
+      );
+    }
 
     return candidates;
   }
@@ -192,6 +255,10 @@ export class TransformerMatcher extends Matcher {
     return Math.max(0, Math.min(1, n));
   }
 
+  private elapsedMs(startedAt: bigint): number {
+    return Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+  }
+
   private async getEmbeddingCached(text: string): Promise<number[]> {
     const key = this.normalizeText(text);
     const cached = this.embeddingCache.get(key);
@@ -266,9 +333,11 @@ export class TransformerMatcher extends Matcher {
         } else {
           // 없으면 새로 생성 (fallback)
           tagEmbedding = await this.getEmbeddingCached(tagName);
-          this.logger.debug(
-            `Redis 캐시 미스 - 태그 임베딩 새로 생성: "${tagName}" (campaign=${campaign.id})`
-          );
+          if (this.logsEnabled) {
+            this.logger.debug(
+              `Redis 캐시 미스 - 태그 임베딩 새로 생성: "${tagName}" (campaign=${campaign.id})`
+            );
+          }
         }
 
         sims.push(
@@ -276,10 +345,12 @@ export class TransformerMatcher extends Matcher {
         );
       } catch (error) {
         // 특정 태그 임베딩이 실패해도 전체 캠페인을 버리진 않고, 해당 태그만 스킵합니다.
-        this.logger.debug(
-          `태그 임베딩 실패로 스킵: "${tagName}" (campaign=${campaign.id})`,
-          error as Error
-        );
+        if (this.logsEnabled) {
+          this.logger.debug(
+            `태그 임베딩 실패로 스킵: "${tagName}" (campaign=${campaign.id})`,
+            error as Error
+          );
+        }
       }
     }
 

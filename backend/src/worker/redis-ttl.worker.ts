@@ -1,10 +1,10 @@
 import {
+  Inject,
   Injectable,
   Logger,
-  OnModuleInit,
   OnModuleDestroy,
+  OnModuleInit,
 } from '@nestjs/common';
-import { Inject } from '@nestjs/common';
 import Redis from 'ioredis';
 import { IOREDIS_CLIENT } from 'src/redis/redis.constant';
 import type { AppIORedisClient } from 'src/redis/redis.type';
@@ -18,7 +18,7 @@ export class RedisTTLWorker implements OnModuleInit, OnModuleDestroy {
   private subscriber: Redis | null = null;
 
   constructor(
-    @Inject(IOREDIS_CLIENT) private readonly redis: AppIORedisClient,
+    @Inject(IOREDIS_CLIENT) private readonly ioRedisClient: AppIORedisClient,
     private readonly cacheRepository: CacheRepository,
     private readonly campaignCacheRepository: CampaignCacheRepository
   ) {}
@@ -26,14 +26,14 @@ export class RedisTTLWorker implements OnModuleInit, OnModuleDestroy {
   async onModuleInit() {
     try {
       // Keyspace Notification 활성화
-      await this.redis.config('SET', 'notify-keyspace-events', 'Ex');
+      await this.ioRedisClient.config('SET', 'notify-keyspace-events', 'Ex');
       this.logger.log(
         'Redis Keyspace Notification 설정 완료: notify-keyspace-events Ex'
       );
 
       // 별도 subscriber 연결 (pub/sub용)
-      this.subscriber = this.redis.duplicate();
-      await this.subscriber.subscribe('__keyevent@0__:expired');
+      this.subscriber = this.ioRedisClient.duplicate();
+      await this.subscriber.subscribe('__keyevent@0__:expired'); // Redis TTL이 만료되었을때의 자동으로 발생하는 만료이벤트를 구독함
 
       this.subscriber.on('message', (channel, expiredKey) => {
         // async 핸들러를 void로 래핑 (lint 에러 방지)
