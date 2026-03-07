@@ -13,7 +13,6 @@ import { CacheRepository } from 'src/cache/repository/cache.repository.interface
 import { RedisCacheRepository } from 'src/cache/repository/redis-cache.repository';
 import { RedisTTLWorker } from './redis-ttl.worker';
 import { getTypeOrmConfig } from 'src/config/typeorm.config';
-import { BidlogWorkerModule } from 'src/bidlogworker/bidlog-worker.module';
 
 @Module({
   imports: [
@@ -26,7 +25,6 @@ import { BidlogWorkerModule } from 'src/bidlogworker/bidlog-worker.module';
     }),
     RedisModule,
     QueueModule,
-    BidlogWorkerModule,
   ],
   providers: [
     EmbeddingWorker,
