@@ -1,43 +1,57 @@
+import { Inject, Logger } from '@nestjs/common';
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
 import { BidLogRepository } from '../bid-log/repositories/bid-log.repository.interface';
 import { BidLogJobData, BidLogJobItemData } from '../queue/types/queue.type';
-import { BidLog } from '../bid-log/bid-log.types';
+import {
+  BidCreatedEventPayload,
+  BidCreatedPubSubMessage,
+  BidLog,
+} from '../bid-log/bid-log.types';
 import { type AppIORedisClient } from '../redis/redis.type';
+import { IOREDIS_CLIENT } from '../redis/redis.constant';
+import { BID_LOG_CREATED_CHANNEL } from '../bid-log/bid-log.constants';
 
 export interface SaveBidLogProps {
   auctionId: string;
   blogId: number;
   isHighIntent: boolean;
-  behaviorScore: number;
+  behaviorScore: number | null;
+  postUrl: string;
   items: BidLogJobItemData[];
 }
 
 @Processor('bidlog-queue')
 export class SaveBidlogWorker extends WorkerHost {
+  private readonly logger = new Logger(SaveBidlogWorker.name);
+
   constructor(
     private readonly bidLogRepository: BidLogRepository,
+    @Inject(IOREDIS_CLIENT)
     private readonly ioRedisClient: AppIORedisClient
   ) {
     super();
   }
 
-  async process(job: Job) {
+  async process(job: Job<BidLogJobData>) {
     if (job.name === 'save-bidlog') {
       const { auctionId, blogId, isHighIntent, behaviorScore, items } =
-        job.data as BidLogJobData;
+        job.data;
 
       const saveBids = await this.saveBidLog({
         auctionId,
         blogId,
         isHighIntent,
         behaviorScore,
+        postUrl: job.data.postUrl,
         items,
       });
 
+      const message = this.buildPubSubMessage(saveBids, job.data);
+
       await this.ioRedisClient.publish(
-        'complete-save-bidlog',
-        JSON.stringify(saveBids)
+        BID_LOG_CREATED_CHANNEL,
+        JSON.stringify(message)
       );
     }
   }
@@ -47,6 +61,7 @@ export class SaveBidlogWorker extends WorkerHost {
     blogId,
     isHighIntent,
     behaviorScore,
+    postUrl,
     items,
   }: SaveBidLogProps): Promise<BidLog[]> {
     const bidLogs: BidLog[] = [];
@@ -58,10 +73,46 @@ export class SaveBidlogWorker extends WorkerHost {
         bidPrice: item.bidPrice,
         campaignId: item.campaignId,
         isHighIntent,
+        postUrl,
         reason: item.reason,
         status: item.status,
       });
     }
     return await this.bidLogRepository.saveMany(bidLogs);
+  }
+
+  private buildPubSubMessage(
+    savedBids: BidLog[],
+    jobData: BidLogJobData
+  ): BidCreatedPubSubMessage {
+    if (savedBids.length !== jobData.items.length) {
+      this.logger.warn(
+        `저장된 BidLog 수(${savedBids.length})와 job item 수(${jobData.items.length})가 일치하지 않습니다`
+      );
+    }
+
+    const events: BidCreatedEventPayload[] = savedBids.flatMap((log, index) => {
+      const item = jobData.items[index];
+
+      if (!item) {
+        this.logger.warn(
+          `job item 누락으로 SSE 이벤트를 건너뜁니다. auctionId=${jobData.auctionId}, index=${index}`
+        );
+        return [];
+      }
+
+      return [
+        {
+          log,
+          userId: item.userId,
+          campaignTitle: item.campaignTitle,
+          blogKey: jobData.blogKey,
+          blogName: jobData.blogName,
+          winAmount: jobData.winAmount,
+        },
+      ];
+    });
+
+    return { events };
   }
 }

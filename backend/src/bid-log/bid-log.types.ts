@@ -25,3 +25,7 @@ export interface BidCreatedEventPayload {
   blogName: string;
   winAmount: number | null;
 }
+
+export interface BidCreatedPubSubMessage {
+  events: BidCreatedEventPayload[];
+}

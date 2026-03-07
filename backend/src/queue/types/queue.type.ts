@@ -29,8 +29,8 @@ export interface BidLogJobData {
   blogKey: string;
   blogName: string;
   isHighIntent: boolean;
-  behaviorScore: number;
+  behaviorScore: number | null;
   postUrl: string;
-  winAmount: number;
+  winAmount: number | null;
   items: BidLogJobItemData[];
 }

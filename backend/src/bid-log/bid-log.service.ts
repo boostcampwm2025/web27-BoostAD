@@ -1,22 +1,76 @@
-import { Injectable, MessageEvent } from '@nestjs/common';
+import {
+  Inject,
+  Injectable,
+  Logger,
+  MessageEvent,
+  OnModuleDestroy,
+  OnModuleInit,
+} from '@nestjs/common';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { Observable } from 'rxjs';
-import { BidCreatedEventPayload, BidStatus } from './bid-log.types';
+import Redis from 'ioredis';
+import {
+  BidCreatedEventPayload,
+  BidCreatedPubSubMessage,
+  BidStatus,
+} from './bid-log.types';
 import { BidLogRepository } from './repositories/bid-log.repository.interface';
 import { BidLogDataDto, BidLogItemDto } from './dto/bid-log-response.dto';
 import { CampaignRepository } from 'src/campaign/repository/campaign.repository.interface';
 import { BlogRepository } from 'src/blog/repository/blog.repository.interface';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { IOREDIS_CLIENT } from 'src/redis/redis.constant';
+import type { AppIORedisClient } from 'src/redis/redis.type';
+import { BID_LOG_CREATED_CHANNEL } from './bid-log.constants';
 
 @Injectable()
-export class BidLogService {
+export class BidLogService implements OnModuleInit, OnModuleDestroy {
+  private readonly logger = new Logger(BidLogService.name);
+  private subscriber: Redis | null = null;
+
   constructor(
     private readonly bidLogRepository: BidLogRepository,
     private readonly campaignRepository: CampaignRepository,
     private readonly blogRepository: BlogRepository,
     private readonly eventEmitter: EventEmitter2,
-    private readonly metricsService: MetricsService
+    private readonly metricsService: MetricsService,
+    @Inject(IOREDIS_CLIENT)
+    private readonly ioRedisClient: AppIORedisClient
   ) {}
+
+  async onModuleInit(): Promise<void> {
+    try {
+      this.subscriber = this.ioRedisClient.duplicate();
+      await this.subscriber.subscribe(BID_LOG_CREATED_CHANNEL);
+
+      this.subscriber.on('message', (channel, rawMessage) => {
+        if (channel !== BID_LOG_CREATED_CHANNEL) {
+          return;
+        }
+
+        this.handlePubSubMessage(rawMessage);
+      });
+
+      this.logger.log(
+        `BidLog pub/sub 구독 시작: channel=${BID_LOG_CREATED_CHANNEL}`
+      );
+    } catch (error) {
+      this.logger.error(
+        'BidLog pub/sub 구독 초기화 실패',
+        error instanceof Error ? error.stack : String(error)
+      );
+    }
+  }
+
+  async onModuleDestroy(): Promise<void> {
+    if (!this.subscriber) {
+      return;
+    }
+
+    await this.subscriber.unsubscribe(BID_LOG_CREATED_CHANNEL);
+    this.subscriber.disconnect();
+    this.subscriber = null;
+  }
 
   async getRealtimeBidLogs(
     userId: number,
@@ -123,5 +177,25 @@ export class BidLogService {
 
     // userId별로 다른 이벤트 발행 (해당 광고주만 수신)
     this.eventEmitter.emit(`bid.created.${userId}`, bidData);
+  }
+
+  private handlePubSubMessage(rawMessage: string): void {
+    try {
+      const message = JSON.parse(rawMessage) as BidCreatedPubSubMessage;
+
+      if (!Array.isArray(message.events)) {
+        this.logger.warn('BidLog pub/sub 메시지 형식이 올바르지 않습니다');
+        return;
+      }
+
+      for (const event of message.events) {
+        this.emitBidCreated(event);
+      }
+    } catch (error) {
+      this.logger.error(
+        'BidLog pub/sub 메시지 처리 실패',
+        error instanceof Error ? error.stack : String(error)
+      );
+    }
   }
 }
