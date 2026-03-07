@@ -138,6 +138,7 @@ describe('SaveBidlogWorker', () => {
     );
 
     const message = JSON.parse(ioRedisClient.publish.mock.calls[0][1]) as {
+      publishedAt?: string;
       events: Array<{
         userId: number;
         campaignTitle: string;
@@ -152,6 +153,7 @@ describe('SaveBidlogWorker', () => {
     };
 
     expect(message).toEqual({
+      publishedAt: expect.any(String),
       events: [
         {
           userId: 11,

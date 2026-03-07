@@ -119,7 +119,10 @@ export class SaveBidlogWorker extends WorkerHost {
       ];
     });
 
-    return { events };
+    return {
+      publishedAt: new Date().toISOString(),
+      events,
+    };
   }
 
   private async measureStage<T>(

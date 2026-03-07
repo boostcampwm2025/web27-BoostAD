@@ -156,7 +156,7 @@ export class BidLogService implements OnModuleInit, OnModuleDestroy {
   }
 
   // RTB에서 호출할 이벤트 발행 메서드
-  emitBidCreated(payload: BidCreatedEventPayload): void {
+  emitBidCreated(payload: BidCreatedEventPayload): boolean {
     const { log, userId, campaignTitle, blogKey, blogName, winAmount } =
       payload;
 
@@ -176,7 +176,7 @@ export class BidLogService implements OnModuleInit, OnModuleDestroy {
     };
 
     // userId별로 다른 이벤트 발행 (해당 광고주만 수신)
-    this.eventEmitter.emit(`bid.created.${userId}`, bidData);
+    return this.eventEmitter.emit(`bid.created.${userId}`, bidData);
   }
 
   private handlePubSubMessage(rawMessage: string): void {
@@ -184,18 +184,44 @@ export class BidLogService implements OnModuleInit, OnModuleDestroy {
       const message = JSON.parse(rawMessage) as BidCreatedPubSubMessage;
 
       if (!Array.isArray(message.events)) {
+        this.metricsService.incBidlogPubSubMessage('invalid_format');
         this.logger.warn('BidLog pub/sub 메시지 형식이 올바르지 않습니다');
         return;
       }
 
+      this.metricsService.incBidlogPubSubMessage('received');
+      this.metricsService.observeBidlogPubSubBatchSize(message.events.length);
+      const publishedAtMs = this.resolvePublishedAtMs(message.publishedAt);
+
       for (const event of message.events) {
-        this.emitBidCreated(event);
+        this.metricsService.incBidlogPubSubEvent('received');
+
+        const hasListeners = this.emitBidCreated(event);
+        this.metricsService.incBidlogPubSubEvent(
+          hasListeners ? 'emitted' : 'no_listener'
+        );
+
+        if (publishedAtMs !== null) {
+          this.metricsService.observeBidlogPubSubDeliveryLag(
+            Date.now() - publishedAtMs
+          );
+        }
       }
     } catch (error) {
+      this.metricsService.incBidlogPubSubMessage('parse_error');
       this.logger.error(
         'BidLog pub/sub 메시지 처리 실패',
         error instanceof Error ? error.stack : String(error)
       );
     }
+  }
+
+  private resolvePublishedAtMs(publishedAt?: string): number | null {
+    if (!publishedAt) {
+      return null;
+    }
+
+    const parsed = Date.parse(publishedAt);
+    return Number.isFinite(parsed) ? parsed : null;
   }
 }

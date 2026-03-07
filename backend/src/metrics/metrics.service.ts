@@ -14,6 +14,8 @@ type RtbFallbackLabel = 'reason';
 type RtbReservationFailureLabel = 'reason';
 type RtbPayloadLabel = 'direction';
 type DependencyLabel = 'dependency' | 'operation' | 'outcome';
+type BidLogPubSubMessageLabel = 'result';
+type BidLogPubSubEventLabel = 'result';
 
 @Injectable()
 export class MetricsService {
@@ -121,6 +123,37 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private readonly bidlogPubSubMessagesTotal =
+    new Counter<BidLogPubSubMessageLabel>({
+      name: 'boostad_bidlog_pubsub_messages_total',
+      help: 'BidLog Redis pub/sub 메시지 처리 수',
+      labelNames: ['result'],
+      registers: [this.registry],
+    });
+
+  private readonly bidlogPubSubEventsTotal = new Counter<BidLogPubSubEventLabel>(
+    {
+      name: 'boostad_bidlog_pubsub_events_total',
+      help: 'BidLog pub/sub 이벤트 처리 수',
+      labelNames: ['result'],
+      registers: [this.registry],
+    }
+  );
+
+  private readonly bidlogPubSubBatchSize = new Histogram({
+    name: 'boostad_bidlog_pubsub_batch_size',
+    help: 'BidLog pub/sub 메시지당 이벤트 개수',
+    buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500],
+    registers: [this.registry],
+  });
+
+  private readonly bidlogPubSubDeliveryLagSeconds = new Histogram({
+    name: 'boostad_bidlog_pubsub_delivery_lag_seconds',
+    help: 'BidLog worker publish부터 API fan-out까지 지연 시간',
+    buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+    registers: [this.registry],
+  });
+
   constructor() {
     collectDefaultMetrics({
       register: this.registry,
@@ -198,6 +231,30 @@ export class MetricsService {
     const labels = { dependency, operation, outcome };
     this.dependencyCallsTotal.inc(labels);
     this.dependencyDurationSeconds.observe(labels, durationMs / 1000);
+  }
+
+  incBidlogPubSubMessage(result: 'received' | 'parse_error' | 'invalid_format') {
+    this.bidlogPubSubMessagesTotal.inc({ result });
+  }
+
+  incBidlogPubSubEvent(result: 'received' | 'emitted' | 'no_listener') {
+    this.bidlogPubSubEventsTotal.inc({ result });
+  }
+
+  observeBidlogPubSubBatchSize(size: number) {
+    if (!Number.isFinite(size) || size < 0) {
+      return;
+    }
+
+    this.bidlogPubSubBatchSize.observe(size);
+  }
+
+  observeBidlogPubSubDeliveryLag(durationMs: number) {
+    if (!Number.isFinite(durationMs) || durationMs < 0) {
+      return;
+    }
+
+    this.bidlogPubSubDeliveryLagSeconds.observe(durationMs / 1000);
   }
 
   incSseConnections(stream: string) {

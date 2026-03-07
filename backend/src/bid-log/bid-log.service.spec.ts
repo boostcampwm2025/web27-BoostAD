@@ -18,6 +18,10 @@ describe('BidLogService', () => {
   let metricsService: {
     incSseConnections: jest.Mock;
     decSseConnections: jest.Mock;
+    incBidlogPubSubMessage: jest.Mock;
+    observeBidlogPubSubBatchSize: jest.Mock;
+    incBidlogPubSubEvent: jest.Mock;
+    observeBidlogPubSubDeliveryLag: jest.Mock;
   };
   let redisClient: {
     duplicate: jest.Mock;
@@ -41,6 +45,10 @@ describe('BidLogService', () => {
     metricsService = {
       incSseConnections: jest.fn(),
       decSseConnections: jest.fn(),
+      incBidlogPubSubMessage: jest.fn(),
+      observeBidlogPubSubBatchSize: jest.fn(),
+      incBidlogPubSubEvent: jest.fn(),
+      observeBidlogPubSubDeliveryLag: jest.fn(),
     };
     redisClient = {
       duplicate: jest.fn().mockReturnValue(subscriber),
@@ -70,6 +78,7 @@ describe('BidLogService', () => {
     messageHandler?.(
       BID_LOG_CREATED_CHANNEL,
       JSON.stringify({
+        publishedAt: new Date(Date.now() - 25).toISOString(),
         events: [
           {
             userId: 11,
@@ -134,6 +143,33 @@ describe('BidLogService', () => {
       },
     ]);
 
+    expect(metricsService.incBidlogPubSubMessage).toHaveBeenCalledWith(
+      'received'
+    );
+    expect(metricsService.observeBidlogPubSubBatchSize).toHaveBeenCalledWith(2);
+    expect(metricsService.incBidlogPubSubEvent).toHaveBeenNthCalledWith(
+      1,
+      'received'
+    );
+    expect(metricsService.incBidlogPubSubEvent).toHaveBeenNthCalledWith(
+      2,
+      'emitted'
+    );
+    expect(metricsService.incBidlogPubSubEvent).toHaveBeenNthCalledWith(
+      3,
+      'received'
+    );
+    expect(metricsService.incBidlogPubSubEvent).toHaveBeenNthCalledWith(
+      4,
+      'no_listener'
+    );
+    expect(metricsService.observeBidlogPubSubDeliveryLag).toHaveBeenCalledTimes(
+      2
+    );
+    expect(
+      metricsService.observeBidlogPubSubDeliveryLag
+    ).toHaveBeenCalledWith(expect.any(Number));
+
     subscription.unsubscribe();
 
     expect(metricsService.decSseConnections).toHaveBeenCalledWith('bidlog');
@@ -144,5 +180,15 @@ describe('BidLogService', () => {
       BID_LOG_CREATED_CHANNEL
     );
     expect(subscriber.disconnect).toHaveBeenCalled();
+  });
+
+  it('records parse errors for malformed pub/sub payloads', async () => {
+    await service.onModuleInit();
+
+    messageHandler?.(BID_LOG_CREATED_CHANNEL, '{bad-json');
+
+    expect(metricsService.incBidlogPubSubMessage).toHaveBeenCalledWith(
+      'parse_error'
+    );
   });
 });

@@ -27,5 +27,6 @@ export interface BidCreatedEventPayload {
 }
 
 export interface BidCreatedPubSubMessage {
+  publishedAt?: string;
   events: BidCreatedEventPayload[];
 }
