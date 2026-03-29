@@ -95,15 +95,16 @@ export class RTBService {
         );
       }
 
-      // 점수 산정 후 탑 k개 반환
-      candidates = this.arrangeByTopK(candidates);
-
       this.metricsService.observeRtbCandidateCount(candidates.length);
 
-      // 2. 선제적 Spent 증가
+      // 2. 점수순으로 정렬한 뒤 top-k window 단위로 선제적 Spent 증가
       candidates = await this.measureStage('reserve', () =>
-        this.increaseSpentCandidates(candidates)
+        this.reserveCandidatesByTopKWindow(candidates)
       );
+
+      if (candidates.length === 0) {
+        throw new Error('예산 확보 가능한 캠페인이 없습니다');
+      }
 
       // 4. 경매에 참여한 캠페인들에 대해 승자 도출, 전체결과 반환
       const result = await this.measureStage('select', () =>
@@ -358,8 +359,28 @@ export class RTBService {
     }
   }
 
-  private arrangeByTopK(candidates: ScoredCandidate[]): ScoredCandidate[] {
-    return candidates.sort((a, b) => b.score - a.score).slice(0, this.TOP_K);
+  private async reserveCandidatesByTopKWindow(
+    candidates: ScoredCandidate[]
+  ): Promise<ScoredCandidate[]> {
+    const sortedCandidates = this.sortCandidatesByScoreDesc(candidates);
+
+    for (let start = 0; start < sortedCandidates.length; start += this.TOP_K) {
+      const candidateWindow = sortedCandidates.slice(start, start + this.TOP_K);
+      const reservedCandidates =
+        await this.increaseSpentCandidates(candidateWindow);
+
+      if (reservedCandidates.length > 0) {
+        return reservedCandidates;
+      }
+    }
+
+    return [];
+  }
+
+  private sortCandidatesByScoreDesc(
+    candidates: ScoredCandidate[]
+  ): ScoredCandidate[] {
+    return [...candidates].sort((a, b) => b.score - a.score);
   }
   // cache 문제로 인한 무의미한 주석
   // 경매 참여 가능한 캠페인만 필터링
