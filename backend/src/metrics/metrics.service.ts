@@ -69,7 +69,35 @@ export class MetricsService {
 
   private readonly rtbCandidateCount = new Histogram({
     name: 'boostad_rtb_candidate_count',
-    help: 'RTB 최종 후보 수 분포',
+    help: 'RTB reserve 전 후보 수 분포',
+    buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+    registers: [this.registry],
+  });
+
+  private readonly rtbReserveAttemptCandidateCount = new Histogram({
+    name: 'boostad_rtb_reserve_attempt_candidate_count',
+    help: 'RTB reserve 단계에서 실제 시도한 후보 수 분포',
+    buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+    registers: [this.registry],
+  });
+
+  private readonly rtbReservedCandidateCount = new Histogram({
+    name: 'boostad_rtb_reserved_candidate_count',
+    help: 'RTB reserve 성공 후보 수 분포',
+    buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+    registers: [this.registry],
+  });
+
+  private readonly rtbReserveWindowAttemptCount = new Histogram({
+    name: 'boostad_rtb_reserve_window_attempt_count',
+    help: 'RTB reserve 성공 또는 종료 전까지 시도한 window 수 분포',
+    buckets: [1, 2, 3, 5, 10, 20, 50, 100],
+    registers: [this.registry],
+  });
+
+  private readonly rtbRollbackCandidateCount = new Histogram({
+    name: 'boostad_rtb_rollback_candidate_count',
+    help: 'RTB rollback 대상 후보 수 분포',
     buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
     registers: [this.registry],
   });
@@ -203,8 +231,28 @@ export class MetricsService {
     });
   }
 
+  observeRtbMatchedBeforeReserveCount(count: number) {
+    this.rtbCandidateCount.observe(count);
+  }
+
   observeRtbCandidateCount(count: number) {
     this.rtbCandidateCount.observe(count);
+  }
+
+  observeRtbReserveAttemptCandidateCount(count: number) {
+    this.rtbReserveAttemptCandidateCount.observe(count);
+  }
+
+  observeRtbReservedCandidateCount(count: number) {
+    this.rtbReservedCandidateCount.observe(count);
+  }
+
+  observeRtbReserveWindowAttemptCount(count: number) {
+    this.rtbReserveWindowAttemptCount.observe(count);
+  }
+
+  observeRtbRollbackCandidateCount(count: number) {
+    this.rtbRollbackCandidateCount.observe(count);
   }
 
   observeRtbEligibleCampaignCount(count: number) {

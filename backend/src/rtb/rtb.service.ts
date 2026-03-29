@@ -95,7 +95,9 @@ export class RTBService {
         );
       }
 
-      this.metricsService.observeRtbCandidateCount(candidates.length);
+      this.metricsService.observeRtbMatchedBeforeReserveCount(
+        candidates.length
+      );
 
       // 2. 점수순으로 정렬한 뒤 top-k window 단위로 선제적 Spent 증가
       candidates = await this.measureStage('reserve', () =>
@@ -220,6 +222,7 @@ export class RTBService {
     const losers = result.candidates.filter(
       (candidate) => candidate.id !== result.winner.id
     );
+    this.metricsService.observeRtbRollbackCandidateCount(losers.length);
 
     // 병렬 처리 - p-limit 사용
     await Promise.allSettled(
@@ -363,16 +366,37 @@ export class RTBService {
     candidates: ScoredCandidate[]
   ): Promise<ScoredCandidate[]> {
     const sortedCandidates = this.sortCandidatesByScoreDesc(candidates);
+    let attemptedWindowCount = 0;
+    let attemptedCandidateCount = 0;
 
     for (let start = 0; start < sortedCandidates.length; start += this.TOP_K) {
+      attemptedWindowCount += 1;
       const candidateWindow = sortedCandidates.slice(start, start + this.TOP_K);
+      attemptedCandidateCount += candidateWindow.length;
       const reservedCandidates =
         await this.increaseSpentCandidates(candidateWindow);
 
       if (reservedCandidates.length > 0) {
+        this.metricsService.observeRtbReserveWindowAttemptCount(
+          attemptedWindowCount
+        );
+        this.metricsService.observeRtbReserveAttemptCandidateCount(
+          attemptedCandidateCount
+        );
+        this.metricsService.observeRtbReservedCandidateCount(
+          reservedCandidates.length
+        );
         return reservedCandidates;
       }
     }
+
+    this.metricsService.observeRtbReserveWindowAttemptCount(
+      attemptedWindowCount
+    );
+    this.metricsService.observeRtbReserveAttemptCandidateCount(
+      attemptedCandidateCount
+    );
+    this.metricsService.observeRtbReservedCandidateCount(0);
 
     return [];
   }
