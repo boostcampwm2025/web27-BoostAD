@@ -1,0 +1,357 @@
+Grafana
+
+/
+
+i \
+
+|
+
+//
+
+AO
+
+VV
+
+1177 7
+
+=
+
+|
+
+|
+
+» |
+
+ㅜ프
+
+문제 해결 및 기술적 의사 결정
+
+000
+
+로 IIWA 호
+
+—,
+
+/
+
+execution: local
+
+script: ké/http/rtb-decision.js
+
+output:
+
+RTB 매칭 파이프라인 성능 최적화 #2
+
+scenarios: (
+
+- 00%)
+
+scenario,
+
+max VUs,
+
+0306 max duration (incl. graceful stop):
+
+* ptb_decision:
+
+-00 iterations/s for 3005 (maxVUs:
+
+gracefulStop:
+
+s)
+
+성는 OF}
+
+결과 및 성고
+
+|   steady-state
+
+OO LO
+
+화
+
+8 THRESHOLDS
+
+구조 개선 후 로컬 제한
+
+화경 부
+
+= Oo
+
+하 테스트에서 실패율 0%를 기
+
+로핸고
+
+SM;
+
+errors
+
+2)
+
+rate=0.00%
+
+warm run 기준 p95 지연 시간은 52.79175에서 10.49175까지 낮아졌습
+
+http_req_duration
+
+~
+
+p(95)=10.49ms
+
+니다. 이를 통해 전체 캠페인 조회와 매칭이 집중되는 RTB hot paths
+
+http_req_failed
+
+steady-state 기준으로 안정화했고, TTL 경계와 대량 조회 구간에서 발생
+
+pate=0.00%
+
+하던 1311 latencyS 크게 완화했습니다.
+
+f] TOTAL RESULTS
+
+Al&
+
+checks_total...
+
+29.999471/s
+
+엔지니어링 회고 캐
+
+ou
+
+마느
+
+LO
+
+이 아니다.
+
+checks_succeede!
+
+100 .00%
+
+out of
+
+chec
+
+fa
+
+out of
+
+느 성느
+
+서을 ㄷ
+
+고 정주류을 논
+
+< decision: status is 2xx
+
+이전에
+
+ㄴㅇ
+
+개
+
+le
+
+Lu
+
+!순히 캐시를 추가하
+
+On Koo eed
+
+이는 문제로 생
+
+감해슨
+
+자언으 BE
+
+CUSTOM
+
+WTAE
+
+니다. 하지만 이번
+
+ㄱ노근 =
+
+해 캐시 적용 시 필연적으로 발생하는
+
+GAMERS oocu ogame codes ones pou
+
+0.00%
+
+out of
+
+Hoo 고
+
+TTL AISI
+
+one
+
+1
+
+!리하는 것과, 전체 조회 경로의 시간 복잡도와 애플리
+
+HTTP
+
+http_req_duration
+
+avg=8.37ms min=4.77ms med=7.94ms max=131.63ms p(90)=9.57ms p(
+
+)=10.49ms
+
+케이션의 메모리
+
+상하을 유
+
+ovue tT
+
+기적으로 함께 제어해야만 제대로된 최적화가 이
+
+{ expected_response:true }.
+
+a
+
+8.37ms min=4.77ms med=7.94ms max=131.63ms p(90)=9.57ms p(95)=10.49ms
+
+http_req_failed
+
+00%
+
+out of
+
+뤄진다는걸 몸소 느낄 수 있었습니다.
+
+http_reqs......... eee ee eee ee eet
+
+29.999471/s
+
+EXECUTION
+
+iteration_duration
+
+avg=8.77ms min=5.07ms med=8.33ms max=133.98ms p(90)=9.96ms p(95)=10.92ms
+
+Lesson Learned
+
+최신성보다 가용성이 중요한 구간을 구분하는 설계
+
+iterations.....
+
+29.999471/s
+
+VUS....
+
+min=|
+
+max=
+
+WEE IER GG cs Godne oocnecudsoa50ne
+
+min=
+
+max=
+
+캐시 TTL 경계에서 요청이 한꺼번에
+
+JHA|S
+
+oue
+
+기다리며 지연이 급증하는 =
+
+210
+
+2
+
+NETWORK
+
+5.8 MB
+
+제를
+
+77
+
+며, 모든 요청에 완전한 최신성을 강제하는 설계가
+
+항상 BO
+
+ㅇㅇ
+
+com ae
+
+것은
+
+CERES tess socom cooSs oGdseaGose
+
+data_received..... 0.6. ..0065 05005
+
+1.5 MB 8.4 kB/s
+
+kB/s
+
+아니라
+
+AS
+
+Loe
+
+배웠습니다.
+
+SWRS
+
+전요하
+
+WOU
+
+뒤에
+
+느 짜으
+
+ce coe
+
+stale 허용으로 응답 가용성을 지키고, 최신성
+
+complete and
+
+interrupted iterations
+
+이 2 필요한 경로만 별도로 관리하
+
+느 바시
+
+ㄴㅇㄱ
+
+이 실서비스에 더 적합하다는 점
+
+rtb_decision v [===
+
+running (5000.06), 900/050 ne
+
+======
+
+=
+
+==] 000/050 VUs 30065 30.00 iters/s
+
+을 체감했습니다.
+
+[개선
+
+LOU
+
+호 진행하 로
+
+컬
+
+TT
+
+i=]
+
+하테스트 K6
+
+ast 254
+
+ii
+
+결과]

@@ -33,12 +33,11 @@ export interface DecisionContext {
 //   name: string;
 // }
 
-export interface Candidate {
-  campaign: CachedCampaign; // Matcher가 Redis에서 조회한 CachedCampaign 반환
+export interface Candidate extends CachedCampaign {
   similarity: number;
 }
 
-export interface ScoredCandidate extends CachedCampaign {
+export interface ScoredCandidate extends Candidate {
   score: number;
 }
 

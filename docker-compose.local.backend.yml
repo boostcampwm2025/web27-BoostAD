@@ -38,6 +38,6 @@ services:
     networks:
       - boostad-local
     restart: unless-stopped
-    cpus: ${BACKEND_CPUS:-1.0}
-    mem_limit: ${BACKEND_MEM_LIMIT:-1g}
+    cpus: ${BACKEND_CPUS:-2.0}
+    mem_limit: ${BACKEND_MEM_LIMIT:-4g}
     pids_limit: ${BACKEND_PIDS_LIMIT:-256}

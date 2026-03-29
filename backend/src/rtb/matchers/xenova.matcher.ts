@@ -2,7 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Matcher } from './matcher.interface';
 import { CampaignCacheRepository } from '../../campaign/repository/campaign.cache.repository.interface';
 import { MLEngine } from '../ml/mlEngine.interface';
-import type { Candidate, DecisionContext } from '../types/decision.types';
+import type { DecisionContext, ScoredCandidate } from '../types/decision.types';
 import type { CachedCampaign } from '../../campaign/types/campaign.types';
 import { MetricsService } from '../../metrics/metrics.service';
 import {
@@ -14,6 +14,8 @@ import {
 export class TransformerMatcher extends Matcher {
   private readonly logger = createRtbPathLogger(TransformerMatcher.name);
   private readonly logsEnabled = rtbPathLogsEnabled();
+  private readonly CPC_WEIGHT = 0.3;
+  private readonly SIMILARITY_WEIGHT = 0.7;
 
   // 최종 매칭 점수(0~1) 임계값
   private readonly SIMILARITY_THRESHOLD = 0.3;
@@ -55,7 +57,9 @@ export class TransformerMatcher extends Matcher {
    * @param context
    * @returns
    */
-  async findCandidatesByTags(context: DecisionContext): Promise<Candidate[]> {
+  async findCandidatesByTags(
+    context: DecisionContext
+  ): Promise<ScoredCandidate[]> {
     // ML 모델 준비 안 됐으면 빈 배열 반환 (Scorer에서 태그 매칭으로 커버 예정)
     if (!this.mlEngine.isReady()) {
       this.metricsService.incRtbFallback('matcher_empty');
@@ -128,11 +132,11 @@ export class TransformerMatcher extends Matcher {
       return [];
     }
 
-    // 자격 있는 캠페인과 스코어 계산 (0~1)
-    // - Promise.all(대량)로 한 번에 태스크를 쌓으면, 대규모 캠페인에서 메모리/마이크로태스크 오버헤드가 커질 수 있음, 게다가 여기서 굳이 Promise.all 쓸 이유없음
-    //   순차 계산 + 임계값 통과 케이스만 후보로 유지
+    // 자격 있는 캠페인에 대해 유사도와 최종 점수를 한 번에 계산합니다.
+    // - Promise.all(대량)로 한 번에 태스크를 쌓으면, 대규모 캠페인에서 메모리/마이크로태스크 오버헤드가 커질 수 있음
+    // - 순차 계산 + 임계값 통과 케이스만 후보로 유지
     const scoreLoopStartedAt = process.hrtime.bigint();
-    const candidates: Candidate[] = [];
+    const candidates: ScoredCandidate[] = [];
     try {
       for (const campaign of eligibleCampaigns) {
         const similarity = await this.scoreCampaignByTags(
@@ -142,7 +146,7 @@ export class TransformerMatcher extends Matcher {
           campaign
         );
         if (similarity >= this.SIMILARITY_THRESHOLD) {
-          candidates.push({ campaign, similarity });
+          candidates.push(this.buildCandidate(campaign, similarity));
         }
       }
       this.metricsService.recordRtbStage(
@@ -166,6 +170,20 @@ export class TransformerMatcher extends Matcher {
     }
 
     return candidates;
+  }
+
+  private buildCandidate(
+    campaign: CachedCampaign,
+    similarity: number
+  ): ScoredCandidate {
+    const cpcScore = campaign.maxCpc * this.CPC_WEIGHT;
+    const similarityScore = similarity * 100 * this.SIMILARITY_WEIGHT;
+
+    return {
+      ...campaign,
+      similarity,
+      score: cpcScore + similarityScore,
+    };
   }
 
   // 요청 태그 배열을 임베딩을 위한 단일 텍스트로 변환합니다.

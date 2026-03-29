@@ -1,0 +1,379 @@
+AO
+
+ㅜ프
+
+문제 해결 및 기술적 의사 결정
+
+르
+
+Oo
+
+데이터 기반
+
+셔느
+
+RTB 요청 결과별 처리량 (RTB Requests by Result)
+
+폴백 4/2 (Fallback Ratio)
+
+Decision HTTP p95
+
+|
+
+oo
+
+최적화
+
+= T
+
+한 다층적 운영 관측성 구축 #2
+
+*-
+
+15 req/s
+
+-
+
+바 병모 트
+
+ra
+
+아아
+
+결과 및 성과 정량 지표 기
+
+Lc On
+
+—T
+
+정과 아키텍처 개선 근거 확보
+
+10 req/s
+
+wee
+
+a
+
+구축한
+
+DANS
+
+ㄴㅋ으르
+
+통해 트래픽 부하 시 MySQL 저장(6806_1610_1085) 구간
+
+4
+
+5 req/s
+
+~
+
+이 dependency p95 기준 0.9~1.38까지 상승하는 HA! write-path 병
+
+0 req/s
+
+이을 트정해스
+
+니다.
+
+02:21:00
+
+0”       02:23:00  02:24:00 -   02:25:00
+
+5s.
+
+목 축 중 하나
+
+미코 TOA
+
+error ~ success
+
+fi
+
+이 PAS 바탕으로 앞선 비동기 큐 파이프라인 분리 아키텍처를 도입할 수
+
+RTB 스테이지 평균 시간 (RTB Stage Avg Duration)
+
+의존성 평균 시간 (Dependency Avg Duration)
+
+이어 고
+
+Aso
+
+MME
+
+이후 최적화
+
+A
+
+| 변화를 체감이 아닌 대시보드와 부하 테스트
+
+2s
+
+17.5 ms
+
+지표로 설명할 수 있는 SS 환경을 갖추게 되었습니다.
+
+10s
+
+15 ms
+
+iN
+
+8s
+
+12.5 ms
+
+6s
+
+—
+
+*.
+
+10 ms
+
+h
+
+엔지니어링 회고
+
+DANS
+
+LT ON
+
+대시보드가 아니라 아키텍처의 나침반
+
+4s
+
+7.5 ms
+
+lez
+
+|
+
+서을 다
+
+수
+
+스
+
+고 전주류을 노
+
+2s
+
+1
+
+Sms
+
+IT
+
+이전에
+
+u
+
+ㅇㅇ
+
+개
+
+22 노노
+
+히 캐시를 추가하
+
+-느 그 끌고 효
+
+이는 문제로 생
+
+Os
+
+자언으
+
+02:21:00
+
+02:22:00
+
+02:23:00
+
+02:24:00
+
+02:25:00
+
+2.5 ms
+
+각했습니다. 하지만 이번
+
+ㄱ보그
+
+통해 캐시 적용 시 필연적으로 발생하는
+
+cache_auction <= match = match_filter_eligible
+
+—2 9 9 sg
+
+벼모으 고
+
+=  match_get_all.campaigns = match_get_request_embedding
+
+“02:21:00
+
+02:22:00
+
+02:23:00
+
+02:24:00
+
+02:25:00
+
+TTL @AleI
+
+o 71:2
+
+[
+
+!리하는 것과, 전체 조회 GLI 시
+
+가 본잔
+
+i |
+
+도와 애플리
+
+match_score_loop = reserve
+
+rollback
+
+score == select
+
+redis/decrement_spent = redis/find_fallback_campaign
+
+total
+
+= redis/increment_spent — redis/set_auction_data
+
+케이션의 메모리
+
+상하을 으
+
+ove
+
+기적으로 함께 제어해야만 제대로된 최적화가 이
+
+RTB 스테이지 p95 (RTB Stage p95)
+
+의존성 095 (Dependency p95)
+
+뤄진다는걸 몸소 느낄 수 있었습니다.
+
+200 ms
+
+4s
+
+150 ms
+
+Lesson Learned 시스템을 입체적으로
+
+oll wo
+
+271 ㄴㄴ
+
+>
+
+| a
+
+At 시야
+
+2s
+
+100 ms
+
+L WS
+
+are
+
+장애나 지연은 단일 지점에서만 발생하지 않는다
+
+ㅁㄴ 디르
+
+배웠습니다. 이번
+
+Os
+
+02:21
+
+02:22:00
+
+02:23:00
+
+——
+
+02:24:00
+
+02:25:00
+
+50 ms
+
+경험을 Sat HTTP
+
+으다수
+
+oe — ㄱㄱ
+
+도뿐 아니라 인프라 리
+
+00
+
+AA
+
+내부 stage 처리
+
+cache_auction «<= match ~ match_filter_eligible
+
+Os
+
+02:
+
+00
+
+02:22:00
+
+02:23:00
+
+02:24:00
+
+02:25:00
+
+=  match_get_all.campaigns = match_get_request_embedding
+
+사바   = redis/find_fallback_campaign
+
+시간, 비동기 큐 적체 SENS 함께 교차 검증하며 시스
+
+테을 인
+
+of 번
+
+체적으로 해석
+
+match_score_loop = reserve
+
+rollback
+
+score «= select
+
+total
+
+= redis/increment_spent = redis/set_auction_data
+
+하는 시야를 기
+
+를 스 이어스
+
+2T MAW
+
+니다
+
+르으 우
+
+[모니터
+
+으르 ㅠㅠ
+
+|한 그라파나 대시보드]

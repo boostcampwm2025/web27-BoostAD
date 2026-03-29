@@ -1,19 +1,14 @@
 import { Injectable } from '@nestjs/common';
 import { Matcher } from './matchers/matcher.interface';
-import { Scorer } from './scorers/scorer.interface';
 import { CampaignSelector } from './selectors/selector.interface';
 import type {
-  Candidate,
   DecisionContext,
   ScoredCandidate,
   SelectionResult,
 } from './types/decision.types';
 import { randomUUID } from 'crypto';
-import { BidLogRepository } from '../bid-log/repositories/bid-log.repository.interface';
-import { BidLogService } from '../bid-log/bid-log.service';
 import { CacheRepository } from '../cache/repository/cache.repository.interface';
 import { BidStatus } from '../bid-log/bid-log.types';
-import { BlogRepository } from '../blog/repository/blog.repository.interface';
 import { CampaignCacheRepository } from '../campaign/repository/campaign.cache.repository.interface';
 import pLimit from 'p-limit';
 import { MetricsService } from '../metrics/metrics.service';
@@ -33,15 +28,12 @@ export class RTBService {
     'c1dda7a5-da58-416b-b8fa-20ba8f5535f9';
   private readonly BATCH_LIMIT = 10;
   private readonly limit = pLimit(this.BATCH_LIMIT);
+  private readonly TOP_K = 10;
 
   constructor(
     private readonly matcher: Matcher,
-    private readonly scorer: Scorer,
     private readonly selector: CampaignSelector,
-    private readonly bidLogRepository: BidLogRepository,
-    private readonly bidLogService: BidLogService,
     private readonly cacheRepository: CacheRepository,
-    private readonly blogRepository: BlogRepository,
     private readonly campaignCacheRepository: CampaignCacheRepository,
     private readonly metricsService: MetricsService,
     @InjectQueue('bidlog-queue')
@@ -60,17 +52,9 @@ export class RTBService {
       // 0. blogId는 Guard에서 이미 검증됨 (중복 조회 제거)
       const blogId = context.blogId;
 
-      // 1. 후보 불러오기 및 필터링
-      // TODO(추후 고려 사항): 여기서도 embedding, deleteAt,active, isHighIntent 속성 반환이 필요한가? -> 아 bidLog기록을 위해서는 isHighIntent 속성은 필요할 거 같음
-      let candidates: Candidate[] = await this.measureStage('match', () =>
+      // 1. 후보 불러오기 및 필터링 + 점수 계산
+      let candidates: ScoredCandidate[] = await this.measureStage('match', () =>
         this.matcher.findCandidatesByTags(context)
-      );
-
-      // -------- 여기부터 병목 후보 ------------------
-
-      // 2. 선제적 Spent 증가
-      candidates = await this.measureStage('reserve', () =>
-        this.increaseSpentCandidates(candidates)
       );
 
       // 후보가 없으면 fallback 캠페인 조회 (캐시에서)
@@ -101,23 +85,29 @@ export class RTBService {
 
             return [
               {
-                campaign: fallbackCampaign,
                 similarity: 0,
+                score: fallbackCampaign.maxCpc * 0.3,
+                ...fallbackCampaign,
               },
             ];
           },
           'fallback'
         );
       }
-      // 3. 유사도 점수 계산
+
+      // 점수 산정 후 탑 k개 반환
+      candidates = this.arrangeByTopK(candidates);
+
       this.metricsService.observeRtbCandidateCount(candidates.length);
-      const scored: ScoredCandidate[] = await this.measureStage('score', () =>
-        this.scorer.scoreCandidates(candidates)
+
+      // 2. 선제적 Spent 증가
+      candidates = await this.measureStage('reserve', () =>
+        this.increaseSpentCandidates(candidates)
       );
 
       // 4. 경매에 참여한 캠페인들에 대해 승자 도출, 전체결과 반환
       const result = await this.measureStage('select', () =>
-        this.selector.selectWinner(scored)
+        this.selector.selectWinner(candidates)
       );
 
       // 5. 패배한 캠페인들의 Spent 롤백
@@ -273,19 +263,21 @@ export class RTBService {
   /**
    * 예산증액에 성공한 캠페인들 반환
    */
-  private async increaseSpentCandidates(candidates: Candidate[]) {
-    const eligibleCandidates: Candidate[] = [];
+  private async increaseSpentCandidates(
+    candidates: ScoredCandidate[]
+  ): Promise<ScoredCandidate[]> {
+    const eligibleCandidates: ScoredCandidate[] = [];
 
     await Promise.allSettled(
       candidates.map((candidate) =>
         this.limit(async () => {
-          const { campaign } = candidate;
+          const { id, maxCpc, dailyBudget, totalBudget } = candidate;
           const dependencyStartedAt = process.hrtime.bigint();
           const reserved = await this.campaignCacheRepository.incrementSpent(
-            campaign.id,
-            campaign.maxCpc,
-            campaign.dailyBudget,
-            campaign.totalBudget
+            id,
+            maxCpc,
+            dailyBudget,
+            totalBudget
           );
 
           this.metricsService.recordDependency(
@@ -300,9 +292,7 @@ export class RTBService {
           } else {
             this.metricsService.incRtbReservationFailure('rejected');
             if (this.logsEnabled) {
-              this.logger.debug(
-                `캠페인 ${campaign.id} 예산 확보 실패 - 후보에서 제외`
-              );
+              this.logger.debug(`캠페인 ${id} 예산 확보 실패 - 후보에서 제외`);
             }
           }
         })
@@ -368,6 +358,9 @@ export class RTBService {
     }
   }
 
+  private arrangeByTopK(candidates: ScoredCandidate[]): ScoredCandidate[] {
+    return candidates.sort((a, b) => b.score - a.score).slice(0, this.TOP_K);
+  }
   // cache 문제로 인한 무의미한 주석
   // 경매 참여 가능한 캠페인만 필터링
   // private filterEligibleCampaigns(candidates: Candidate[]): Candidate[] {
