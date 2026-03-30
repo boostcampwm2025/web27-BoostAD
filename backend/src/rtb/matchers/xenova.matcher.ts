@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Matcher } from './matcher.interface';
 import { CampaignCacheRepository } from '../../campaign/repository/campaign.cache.repository.interface';
 import { MLEngine } from '../ml/mlEngine.interface';
@@ -43,13 +44,27 @@ export class TransformerMatcher extends Matcher {
   // 임베딩은 계산 비용이 높아서(모델 호출), 태그 문자열 기준으로 간단 캐싱합니다.
   private readonly embeddingCache = new Map<string, number[]>();
   private readonly EMBEDDING_CACHE_MAX_SIZE = 1_000;
+  private readonly annEnabled: boolean;
+  private readonly annTopL: number;
+  private readonly annTopM: number;
+  private readonly annMaxTagHitsPerCampaign: number;
 
   constructor(
     private readonly campaignCacheRepo: CampaignCacheRepository,
     private readonly mlEngine: MLEngine,
-    private readonly metricsService: MetricsService
+    private readonly metricsService: MetricsService,
+    private readonly configService: ConfigService
   ) {
     super();
+    this.annEnabled =
+      this.configService.get<string>('RTB_MATCHER_ANN_ENABLED', 'false') ===
+      'true';
+    this.annTopL = this.getPositiveIntEnv('RTB_MATCHER_ANN_TOP_L', 200);
+    this.annTopM = this.getPositiveIntEnv('RTB_MATCHER_ANN_TOP_M', 30);
+    this.annMaxTagHitsPerCampaign = this.getPositiveIntEnv(
+      'RTB_MATCHER_ANN_PER_CAMPAIGN_HIT_LIMIT',
+      3
+    );
   }
 
   /**
@@ -72,6 +87,42 @@ export class TransformerMatcher extends Matcher {
     const requestText = this.buildRequestText(context.tags);
     const requestNorm = this.normalizeText(requestText);
     const requestTokens = new Set(this.tokenizeText(requestText));
+
+    let requestEmbedding: number[];
+    const requestEmbeddingStartedAt = process.hrtime.bigint();
+    try {
+      // 요청 임베딩은 모든 캠페인 비교에서 공통으로 사용되므로 한 번만 계산합니다.
+      requestEmbedding = await this.getEmbeddingCached(requestText);
+      this.metricsService.recordRtbStage(
+        'match_get_request_embedding',
+        'ok',
+        this.elapsedMs(requestEmbeddingStartedAt)
+      );
+      // requestEmbedding = await this.mlEngine.getEmbedding(requestText);
+    } catch (error) {
+      this.metricsService.recordRtbStage(
+        'match_get_request_embedding',
+        'error',
+        this.elapsedMs(requestEmbeddingStartedAt)
+      );
+      this.metricsService.incRtbFallback('embedding_error');
+      if (this.logsEnabled) {
+        this.logger.warn(
+          '요청 태그 임베딩 생성에 실패했습니다.',
+          error as Error
+        );
+      }
+      return [];
+    }
+
+    if (this.annEnabled) {
+      return this.findCandidatesByAnn(
+        context,
+        requestEmbedding,
+        requestNorm,
+        requestTokens
+      );
+    }
 
     // Redis에서 모든 캠페인 조회 (캐시 우선 전략)
     const getAllCampaignsStartedAt = process.hrtime.bigint();
@@ -105,33 +156,156 @@ export class TransformerMatcher extends Matcher {
       return [];
     }
 
-    let requestEmbedding: number[];
-    const requestEmbeddingStartedAt = process.hrtime.bigint();
-    try {
-      // 요청 임베딩은 모든 캠페인 비교에서 공통으로 사용되므로 한 번만 계산합니다.
-      requestEmbedding = await this.getEmbeddingCached(requestText);
-      this.metricsService.recordRtbStage(
-        'match_get_request_embedding',
-        'ok',
-        this.elapsedMs(requestEmbeddingStartedAt)
-      );
-      // requestEmbedding = await this.mlEngine.getEmbedding(requestText);
-    } catch (error) {
-      this.metricsService.recordRtbStage(
-        'match_get_request_embedding',
-        'error',
-        this.elapsedMs(requestEmbeddingStartedAt)
-      );
-      this.metricsService.incRtbFallback('embedding_error');
+    return this.scoreEligibleCampaigns(
+      eligibleCampaigns,
+      requestEmbedding,
+      requestNorm,
+      requestTokens,
+      allCampaigns.length
+    );
+  }
+
+  private getPositiveIntEnv(name: string, defaultValue: number): number {
+    const raw = this.configService.get<string>(name);
+    const parsed = raw ? Number.parseInt(raw, 10) : defaultValue;
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return defaultValue;
+    }
+    return parsed;
+  }
+
+  private async findCandidatesByAnn(
+    context: DecisionContext,
+    requestEmbedding: number[],
+    requestNorm: string,
+    requestTokens: Set<string>
+  ): Promise<ScoredCandidate[]> {
+    const annSearchStartedAt = process.hrtime.bigint();
+    const tagHits = await this.campaignCacheRepo.searchCampaignTagVectors({
+      queryEmbedding: requestEmbedding,
+      topL: this.annTopL,
+      isHighIntent: context.isHighIntent,
+      nowTs: Date.now(),
+    });
+    this.metricsService.recordRtbStage(
+      'match_ann_search',
+      'ok',
+      this.elapsedMs(annSearchStartedAt)
+    );
+    this.metricsService.observeRtbAnnTagHitCount(tagHits.length);
+
+    if (tagHits.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
       if (this.logsEnabled) {
-        this.logger.warn(
-          '요청 태그 임베딩 생성에 실패했습니다.',
-          error as Error
-        );
+        this.logger.debug('ANN retrieval 결과가 비어 있습니다.');
       }
       return [];
     }
 
+    const groupHitsStartedAt = process.hrtime.bigint();
+    const retrievedCampaignIds = this.aggregateAnnTagHits(tagHits)
+      .slice(0, this.annTopM)
+      .map((item) => item.campaignId);
+    this.metricsService.recordRtbStage(
+      'match_ann_group_hits',
+      'ok',
+      this.elapsedMs(groupHitsStartedAt)
+    );
+    this.metricsService.observeRtbAnnRetrievedCampaignCount(
+      retrievedCampaignIds.length
+    );
+
+    if (retrievedCampaignIds.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
+      return [];
+    }
+
+    const loadRetrievedStartedAt = process.hrtime.bigint();
+    const retrievedCampaigns =
+      await this.campaignCacheRepo.findCampaignCachesByIds(retrievedCampaignIds);
+    this.metricsService.recordRtbStage(
+      'match_load_retrieved_campaigns',
+      'ok',
+      this.elapsedMs(loadRetrievedStartedAt)
+    );
+
+    const eligibleCampaigns = this.filterEligibleCampaigns(
+      retrievedCampaigns,
+      context.isHighIntent
+    );
+
+    if (eligibleCampaigns.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
+      return [];
+    }
+
+    return this.scoreEligibleCampaigns(
+      eligibleCampaigns,
+      requestEmbedding,
+      requestNorm,
+      requestTokens,
+      eligibleCampaigns.length
+    );
+  }
+
+  private aggregateAnnTagHits(
+    tagHits: Array<{ campaignId: string; similarity: number }>
+  ): Array<{ campaignId: string; retrievalScore: number }> {
+    const grouped = new Map<string, number[]>();
+
+    for (const hit of tagHits) {
+      const bucket = grouped.get(hit.campaignId) ?? [];
+      if (bucket.length < this.annMaxTagHitsPerCampaign) {
+        bucket.push(hit.similarity);
+      } else {
+        const minValue = Math.min(...bucket);
+        if (hit.similarity > minValue) {
+          const minIndex = bucket.indexOf(minValue);
+          bucket[minIndex] = hit.similarity;
+        }
+      }
+      grouped.set(hit.campaignId, bucket);
+    }
+
+    return [...grouped.entries()]
+      .map(([campaignId, similarities]) => {
+        const sorted = [...similarities].sort((a, b) => b - a);
+        const topWeighted = this.computeTopWeightedSimilarity(sorted);
+        const coverage = this.clamp01(
+          sorted.length / this.annMaxTagHitsPerCampaign
+        );
+        const retrievalScore = this.clamp01(topWeighted * 0.85 + coverage * 0.15);
+
+        return { campaignId, retrievalScore };
+      })
+      .sort((a, b) => b.retrievalScore - a.retrievalScore);
+  }
+
+  private computeTopWeightedSimilarity(similarities: number[]): number {
+    const k = Math.min(this.TOP_K, similarities.length);
+    let weighted = 0;
+    let weightSum = 0;
+
+    for (let i = 0; i < k; i++) {
+      const weight = this.TOP_K_WEIGHTS[i] ?? 0;
+      weightSum += weight;
+      weighted += similarities[i] * weight;
+    }
+
+    if (weightSum === 0) {
+      return 0;
+    }
+
+    return this.clamp01(weighted / weightSum);
+  }
+
+  private async scoreEligibleCampaigns(
+    eligibleCampaigns: CachedCampaign[],
+    requestEmbedding: number[],
+    requestNorm: string,
+    requestTokens: Set<string>,
+    totalCampaignCount: number
+  ): Promise<ScoredCandidate[]> {
     // 자격 있는 캠페인에 대해 유사도와 최종 점수를 한 번에 계산합니다.
     // - Promise.all(대량)로 한 번에 태스크를 쌓으면, 대규모 캠페인에서 메모리/마이크로태스크 오버헤드가 커질 수 있음
     // - 순차 계산 + 임계값 통과 케이스만 후보로 유지
@@ -165,7 +339,7 @@ export class TransformerMatcher extends Matcher {
 
     if (this.logsEnabled) {
       this.logger.debug(
-        `필터링된 캠페인 수 ${candidates.length}/${allCampaigns.length} 캠페인의 유사도 (임계값: ${this.SIMILARITY_THRESHOLD})`
+        `필터링된 캠페인 수 ${candidates.length}/${totalCampaignCount} 캠페인의 유사도 (임계값: ${this.SIMILARITY_THRESHOLD})`
       );
     }
 
@@ -188,7 +362,12 @@ export class TransformerMatcher extends Matcher {
 
   // 요청 태그 배열을 임베딩을 위한 단일 텍스트로 변환합니다.
   private buildRequestText(tags: string[]): string {
-    return tags.join(' ');
+    const canonicalTags = [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))]
+      .sort((a, b) =>
+        this.normalizeText(a).localeCompare(this.normalizeText(b))
+      );
+
+    return canonicalTags.join(' ');
   }
 
   // 비딩 자격 필터링: ACTIVE + 날짜 범위 + deletedAt + embeddingTags 존재

@@ -21,6 +21,15 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
       },
       {
         name: 'bidlog-queue',
+        defaultJobOptions: {
+          removeOnComplete: true,
+          removeOnFail: false,
+          attempts: 5,
+          backoff: {
+            type: 'exponential',
+            delay: 1000,
+          },
+        },
       }
     ),
   ],

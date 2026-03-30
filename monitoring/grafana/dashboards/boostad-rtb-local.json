@@ -130,12 +130,12 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "sum(rate(boostad_rtb_fallback_total{job=\"backend-app\"}[1m])) / clamp_min(sum(rate(boostad_rtb_requests_total{job=\"backend-app\"}[1m])), 1e-9)",
+          "expr": "((sum(rate(boostad_rtb_requests_total{job=\"backend-app\",result=\"fallback\"}[1m])) ) or on() vector(0)) / clamp_min(((sum(rate(boostad_rtb_requests_total{job=\"backend-app\"}[1m])) ) or on() vector(0)), 1e-9)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "폴백 비율 (Fallback Ratio)",
+      "title": "폴백 요청 비율 (Fallback Request Ratio)",
       "type": "stat"
     },
     {
@@ -446,7 +446,7 @@
           "refId": "A"
         }
       ],
-      "title": "폴백 사유별 발생량 (Fallback Reasons)",
+      "title": "폴백 이벤트 사유별 발생량 (Fallback Reason Events)",
       "type": "timeseries"
     },
     {

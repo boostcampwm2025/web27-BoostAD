@@ -109,6 +109,20 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private readonly rtbAnnTagHitCount = new Histogram({
+    name: 'boostad_rtb_ann_tag_hit_count',
+    help: 'ANN retrieval이 반환한 tag hit 수 분포',
+    buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+    registers: [this.registry],
+  });
+
+  private readonly rtbAnnRetrievedCampaignCount = new Histogram({
+    name: 'boostad_rtb_ann_retrieved_campaign_count',
+    help: 'ANN retrieval 이후 exact rerank로 넘긴 캠페인 수 분포',
+    buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+    registers: [this.registry],
+  });
+
   private readonly rtbBidLogCount = new Histogram({
     name: 'boostad_rtb_bidlog_count',
     help: '요청당 저장된 bid log 수 분포',
@@ -257,6 +271,14 @@ export class MetricsService {
 
   observeRtbEligibleCampaignCount(count: number) {
     this.rtbEligibleCampaignCount.observe(count);
+  }
+
+  observeRtbAnnTagHitCount(count: number) {
+    this.rtbAnnTagHitCount.observe(count);
+  }
+
+  observeRtbAnnRetrievedCampaignCount(count: number) {
+    this.rtbAnnRetrievedCampaignCount.observe(count);
   }
 
   observeRtbBidLogCount(count: number) {

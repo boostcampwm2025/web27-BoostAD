@@ -74,3 +74,17 @@ export type CachedCampaignWithoutSpent = Omit<
   CachedCampaign,
   'dailySpent' | 'totalSpent'
 >;
+
+export type CampaignTagVectorSearchOptions = {
+  queryEmbedding: number[];
+  topL: number;
+  isHighIntent: boolean;
+  nowTs: number;
+};
+
+export type CampaignTagVectorSearchHit = {
+  campaignId: string;
+  tagName: string;
+  distance: number;
+  similarity: number;
+};

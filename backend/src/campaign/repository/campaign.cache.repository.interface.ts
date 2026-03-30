@@ -1,6 +1,8 @@
 import {
   CachedCampaign,
   CachedCampaignWithoutSpent,
+  CampaignTagVectorSearchHit,
+  CampaignTagVectorSearchOptions,
 } from '../types/campaign.types';
 
 export abstract class CampaignCacheRepository {
@@ -16,6 +18,7 @@ export abstract class CampaignCacheRepository {
   ): Promise<void>;
 
   abstract findCampaignCacheById(id: string): Promise<CachedCampaign | null>;
+  abstract findCampaignCachesByIds(ids: string[]): Promise<CachedCampaign[]>;
 
   // 상태만 업데이트 (embeddingTags 보존)
   abstract updateCampaignStatus(id: string, status: string): Promise<void>;
@@ -55,4 +58,8 @@ export abstract class CampaignCacheRepository {
 
   // 일일 예산 리셋용 (자정 정산)
   abstract resetDailySpentCache(id: string): Promise<void>;
+
+  abstract searchCampaignTagVectors(
+    options: CampaignTagVectorSearchOptions
+  ): Promise<CampaignTagVectorSearchHit[]>;
 }
