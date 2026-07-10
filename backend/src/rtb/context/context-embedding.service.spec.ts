@@ -5,6 +5,10 @@ import { ContextEmbeddingService } from './context-embedding.service';
 import type { ContextEmbeddingJobData } from '../../queue/types/queue.type';
 
 describe('ContextEmbeddingService', () => {
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
   const buildRedis = () => {
     const store = new Map<string, string>();
     return {
@@ -26,12 +30,14 @@ describe('ContextEmbeddingService', () => {
   const buildHarness = (options?: {
     redis?: ReturnType<typeof buildRedis>;
     modelVersion?: string;
+    config?: Record<string, string>;
   }) => {
     const redis = options?.redis ?? buildRedis();
     const queue = { add: jest.fn().mockResolvedValue({ id: 'job' }) };
     const metrics = {
       recordRtbContextObserve: jest.fn(),
       recordRtbContextJob: jest.fn(),
+      recordRtbContextCache: jest.fn(),
     };
     const mlEngine = {
       isReady: jest.fn(() => true),
@@ -42,7 +48,11 @@ describe('ContextEmbeddingService', () => {
       computeTextSimilarity: jest.fn(),
     } as unknown as MLEngine;
     const config = {
-      get: jest.fn((_key: string, defaultValue?: string) => defaultValue),
+      get: jest.fn((key: string, defaultValue?: string) =>
+        options?.config && key in options.config
+          ? options.config[key]
+          : defaultValue
+      ),
     } as unknown as ConfigService;
     const service = new ContextEmbeddingService(
       mlEngine,
@@ -76,7 +86,7 @@ describe('ContextEmbeddingService', () => {
   });
 
   it('3C-U2: completed worker output becomes READY and reusable', async () => {
-    const { service, queue } = buildHarness();
+    const { service, queue, redis, metrics } = buildHarness();
     const pending = await service.observe({
       title: 'title',
       body: 'body',
@@ -96,7 +106,19 @@ describe('ContextEmbeddingService', () => {
     ).resolves.toEqual({
       status: 'READY',
       embedding: [0.1, 0.2, 0.3],
+      source: 'L2',
     });
+    const redisReadsAfterL2 = redis.get.mock.calls.length;
+    await expect(
+      service.resolveForDecision(pending.contextId)
+    ).resolves.toEqual({
+      status: 'READY',
+      embedding: [0.1, 0.2, 0.3],
+      source: 'L1',
+    });
+    expect(redis.get.mock.calls.length).toBe(redisReadsAfterL2);
+    expect(metrics.recordRtbContextCache).toHaveBeenCalledWith('l2_hit');
+    expect(metrics.recordRtbContextCache).toHaveBeenCalledWith('l1_hit');
     const repeated = await service.observe({
       title: 'title',
       body: 'body',
@@ -142,5 +164,49 @@ describe('ContextEmbeddingService', () => {
     await expect(
       service.resolveForDecision(`ctx_${'f'.repeat(64)}`)
     ).resolves.toEqual({ status: 'MISS' });
+  });
+
+  it('3D-U2: READY L1 is bounded by LRU size', async () => {
+    const harness = buildHarness({
+      config: { RTB_CONTEXT_L1_MAX_SIZE: '1' },
+    });
+
+    const first = await harness.service.observe({ title: 'first', tags: [] });
+    const firstJob = harness.queue.add.mock
+      .calls[0][1] as ContextEmbeddingJobData;
+    await harness.service.completeJob(firstJob, [0.1, 0.2, 0.3]);
+    await harness.service.resolveForDecision(first.contextId);
+
+    const second = await harness.service.observe({ title: 'second', tags: [] });
+    const secondJob = harness.queue.add.mock
+      .calls[1][1] as ContextEmbeddingJobData;
+    await harness.service.completeJob(secondJob, [0.4, 0.5, 0.6]);
+    await harness.service.resolveForDecision(second.contextId);
+
+    expect(harness.service.getReadyL1Size()).toBe(1);
+    expect(harness.metrics.recordRtbContextCache).toHaveBeenCalledWith(
+      'eviction'
+    );
+    await expect(
+      harness.service.resolveForDecision(first.contextId)
+    ).resolves.toMatchObject({ status: 'READY', source: 'L2' });
+  });
+
+  it('3D-U3: expired READY L1 falls back to Redis L2', async () => {
+    jest.useFakeTimers().setSystemTime(new Date('2026-07-10T00:00:00Z'));
+    const harness = buildHarness({
+      config: { RTB_CONTEXT_L1_TTL_MS: '10' },
+    });
+    const pending = await harness.service.observe({ title: 'ttl', tags: [] });
+    const job = harness.queue.add.mock.calls[0][1] as ContextEmbeddingJobData;
+    await harness.service.completeJob(job, [0.1, 0.2, 0.3]);
+    await harness.service.resolveForDecision(pending.contextId);
+    const readsAfterFirst = harness.redis.get.mock.calls.length;
+
+    jest.advanceTimersByTime(11);
+    await expect(
+      harness.service.resolveForDecision(pending.contextId)
+    ).resolves.toMatchObject({ status: 'READY', source: 'L2' });
+    expect(harness.redis.get.mock.calls.length).toBe(readsAfterFirst + 1);
   });
 });

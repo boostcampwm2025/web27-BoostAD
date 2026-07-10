@@ -331,6 +331,18 @@ const result = {
             ]
           )
         ),
+        cache: Object.fromEntries(
+          ['l1_hit', 'l1_miss', 'l2_hit', 'eviction'].map((result) => [
+            result,
+            counterDeltaByLabel(
+              before,
+              after,
+              'boostad_rtb_context_cache_total',
+              'result',
+              result
+            ),
+          ])
+        ),
       },
     },
     cpuSeconds: counterDeltaByMetric(

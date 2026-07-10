@@ -25,6 +25,7 @@ type LexicalFallbackLabel = 'reason';
 type ContextObserveLabel = 'status';
 type ContextJobLabel = 'result';
 type ContextDecisionLabel = 'status';
+type ContextCacheLabel = 'result';
 
 @Injectable()
 export class MetricsService {
@@ -270,6 +271,13 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private readonly rtbContextCacheTotal = new Counter<ContextCacheLabel>({
+    name: 'boostad_rtb_context_cache_total',
+    help: 'Context READY embedding L1/L2 cache outcomes',
+    labelNames: ['result'],
+    registers: [this.registry],
+  });
+
   private readonly rtbReservationFailuresTotal =
     new Counter<RtbReservationFailureLabel>({
       name: 'boostad_rtb_reservation_failures_total',
@@ -507,6 +515,10 @@ export class MetricsService {
     status: 'READY' | 'PENDING' | 'FAILED' | 'MISS' | 'TIMEOUT' | 'ERROR'
   ) {
     this.rtbContextDecisionTotal.inc({ status });
+  }
+
+  recordRtbContextCache(result: 'l1_hit' | 'l1_miss' | 'l2_hit' | 'eviction') {
+    this.rtbContextCacheTotal.inc({ result });
   }
 
   incRtbReservationFailure(reason: string, count = 1) {
