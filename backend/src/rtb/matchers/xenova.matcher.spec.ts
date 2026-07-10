@@ -59,6 +59,10 @@ describe('TransformerMatcher ANN path', () => {
       recordRtbEmbeddingBackground: jest.fn(),
       recordRtbLexicalFallback: jest.fn(),
       recordRtbContextDecision: jest.fn(),
+      recordRtbHybridShadow: jest.fn(),
+      observeRtbHybridSparseLookupDuration: jest.fn(),
+      observeRtbHybridFusionDuration: jest.fn(),
+      recordRtbHybridShadowWinnerAgreement: jest.fn(),
     }) as unknown as MetricsService;
 
   const buildConfigService = (overrides?: Record<string, string>) =>
@@ -324,6 +328,209 @@ describe('TransformerMatcher ANN path', () => {
     expect(candidates.map((candidate) => candidate.similarity)).toEqual([
       0.9, 0.4,
     ]);
+  });
+
+  it('keeps dense primary winners when RTB_RETRIEVAL_MODE=shadow', async () => {
+    const denseOnly = {
+      ...buildCampaign('dense-1', ['typescript'], { typescript: [1, 0] }),
+      embeddingDocument: [0.9, 0.1],
+    };
+    const sparseOnly = {
+      ...buildCampaign('sparse-1', ['typescript'], { typescript: [0.5, 0.5] }),
+      embeddingDocument: [0.1, 0.9],
+      maxCpc: 200,
+    };
+    const repository = buildRepository([denseOnly, sparseOnly]);
+    repository.searchCampaignDocumentVectors.mockResolvedValue([
+      { campaignId: 'dense-1', distance: 0.1, similarity: 0.9 },
+    ]);
+    const metrics = buildMetricsService();
+    const matcher = buildMatcher(
+      repository,
+      buildSnapshot([denseOnly, sparseOnly]),
+      buildMlEngine(),
+      metrics,
+      buildProductDefaultConfigService({
+        RTB_MATCHER_ANN_ENABLED: 'true',
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD: '0.3',
+        RTB_RETRIEVAL_MODE: 'shadow',
+        RTB_HYBRID_SHADOW_LIMIT: '10',
+      })
+    );
+
+    const candidates = await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['typescript'],
+      postUrl: 'https://example.com/post',
+      behaviorScore: 50,
+      isHighIntent: false,
+    });
+
+    expect(candidates.map((candidate) => candidate.id)).toEqual(['dense-1']);
+    expect(
+      (metrics as unknown as { recordRtbHybridShadow: jest.Mock })
+        .recordRtbHybridShadow
+    ).toHaveBeenCalledWith('ok');
+    expect(
+      (
+        metrics as unknown as {
+          recordRtbHybridShadowWinnerAgreement: jest.Mock;
+        }
+      ).recordRtbHybridShadowWinnerAgreement
+    ).toHaveBeenCalled();
+    expect(repository.reserveFirstAvailable).not.toBeDefined();
+  });
+
+  it('returns fused shadow rankings from findQualityRankings(hybrid_shadow)', async () => {
+    const denseOnly = {
+      ...buildCampaign('dense-1', ['react'], { react: [1, 0] }),
+      embeddingDocument: [0.9, 0.1],
+    };
+    const sparseOnly = {
+      ...buildCampaign('sparse-1', ['typescript'], {
+        typescript: [0.5, 0.5],
+      }),
+      embeddingDocument: [0.8, 0.2],
+      maxCpc: 200,
+    };
+    const repository = buildRepository([denseOnly, sparseOnly]);
+    repository.searchCampaignDocumentVectors.mockResolvedValue([
+      { campaignId: 'dense-1', distance: 0.1, similarity: 0.9 },
+    ]);
+    const matcher = buildMatcher(
+      repository,
+      buildSnapshot([denseOnly, sparseOnly]),
+      buildMlEngine(),
+      buildMetricsService(),
+      buildProductDefaultConfigService({
+        RTB_MATCHER_ANN_ENABLED: 'true',
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD: '0.3',
+        RTB_RETRIEVAL_MODE: 'dense_only',
+        RTB_HYBRID_SPARSE_WEIGHT: '0.2',
+        RTB_HYBRID_SPARSE_SUPPLEMENT_LIMIT: '10',
+        RTB_HYBRID_FINAL_LIMIT: '10',
+      })
+    );
+
+    const shadow = await matcher.findQualityRankings(
+      {
+        blogKey: 'blog',
+        blogId: 1,
+        blogName: 'blog',
+        tags: ['typescript'],
+        postUrl: 'https://example.com/post',
+        behaviorScore: 50,
+        isHighIntent: false,
+      },
+      'hybrid_shadow'
+    );
+
+    expect(shadow.map((candidate) => candidate.id)).toEqual(
+      expect.arrayContaining(['dense-1', 'sparse-1'])
+    );
+    expect(shadow[0]?.id).toBe('dense-1');
+  });
+
+  it('exact-reranks the hybrid pool below the locked dense winner', async () => {
+    const denseFirstByAnn = {
+      ...buildCampaign('dense-ann-1', ['react'], { react: [1, 0] }),
+      embeddingDocument: [0.6, 0.4],
+      maxCpc: 100,
+    };
+    const denseBestByExact = {
+      ...buildCampaign('dense-exact-1', ['node'], { node: [1, 0] }),
+      embeddingDocument: [0.9, 0.1],
+      maxCpc: 100,
+    };
+    const sparseOnly = {
+      ...buildCampaign('sparse-1', ['typescript'], { typescript: [1, 0] }),
+      embeddingDocument: [1, 0],
+      maxCpc: 500,
+    };
+    const campaigns = [denseFirstByAnn, denseBestByExact, sparseOnly];
+    const repository = buildRepository(campaigns);
+    repository.searchCampaignDocumentVectors.mockResolvedValue([
+      { campaignId: 'dense-ann-1', distance: 0.01, similarity: 0.99 },
+      { campaignId: 'dense-exact-1', distance: 0.02, similarity: 0.98 },
+    ]);
+    const matcher = buildMatcher(
+      repository,
+      buildSnapshot(campaigns),
+      buildMlEngine(),
+      buildMetricsService(),
+      buildProductDefaultConfigService({
+        RTB_MATCHER_ANN_ENABLED: 'true',
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD: '0.3',
+        RTB_HYBRID_SPARSE_WEIGHT: '0.2',
+        RTB_HYBRID_SPARSE_SUPPLEMENT_LIMIT: '10',
+        RTB_HYBRID_FINAL_LIMIT: '10',
+      })
+    );
+
+    const shadow = await matcher.findQualityRankings(
+      {
+        blogKey: 'blog',
+        blogId: 1,
+        blogName: 'blog',
+        tags: ['typescript'],
+        postUrl: 'https://example.com/post',
+        behaviorScore: 50,
+        isHighIntent: false,
+      },
+      'hybrid_shadow'
+    );
+
+    expect(shadow.map((candidate) => candidate.id)).toEqual([
+      'dense-ann-1',
+      'dense-exact-1',
+      'sparse-1',
+    ]);
+    expect(shadow[0].similarity).toBe(0.6);
+    expect(shadow[1].similarity).toBe(0.9);
+    expect(shadow[2].score).toBeLessThan(shadow[1].score);
+  });
+
+  it('does not run hybrid shadow when RTB_RETRIEVAL_MODE=dense_only', async () => {
+    const campaign1 = {
+      ...buildCampaign('c1', ['typescript'], { typescript: [1, 0] }),
+      embeddingDocument: [0.4, 0.6],
+    };
+    const repository = buildRepository([campaign1]);
+    repository.searchCampaignDocumentVectors.mockResolvedValue([
+      { campaignId: 'c1', distance: 0.1, similarity: 0.9 },
+    ]);
+    const metrics = buildMetricsService();
+    const matcher = buildMatcher(
+      repository,
+      buildSnapshot([campaign1]),
+      buildMlEngine(),
+      metrics,
+      buildProductDefaultConfigService({
+        RTB_MATCHER_ANN_ENABLED: 'true',
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_RETRIEVAL_MODE: 'dense_only',
+      })
+    );
+
+    await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['typescript'],
+      postUrl: 'https://example.com/post',
+      behaviorScore: 50,
+      isHighIntent: false,
+    });
+
+    expect(
+      (metrics as unknown as { recordRtbHybridShadow: jest.Mock })
+        .recordRtbHybridShadow
+    ).not.toHaveBeenCalled();
   });
 
   it('returns no semantic candidates when every document is below threshold', async () => {

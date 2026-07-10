@@ -37,6 +37,18 @@ export function chunk(items, size) {
   return batches;
 }
 
+export function resolveRetrievalModes(mode) {
+  if (mode === 'paired') {
+    return ['dense_only', 'hybrid_shadow'];
+  }
+  if (mode === 'dense_only' || mode === 'hybrid_shadow') {
+    return [mode];
+  }
+  throw new Error(
+    'ranking extractor는 dense_only, hybrid_shadow 또는 paired만 지원합니다.'
+  );
+}
+
 function parseJsonLines(value) {
   return value
     .split(/\r?\n/)
@@ -144,9 +156,7 @@ async function main() {
   if (!token) {
     throw new Error('--token or LOADTEST_RESET_TOKEN is required');
   }
-  if (retrievalMode !== 'dense_only') {
-    throw new Error('현재 ranking extractor는 dense_only만 지원합니다.');
-  }
+  const retrievalModes = resolveRetrievalModes(retrievalMode);
   if (!variant || !/^[a-z0-9][a-z0-9_-]*$/i.test(variant)) {
     throw new Error('--variant must be a filesystem-safe identifier');
   }
@@ -189,49 +199,56 @@ async function main() {
     )}\n`,
     'utf8'
   );
-  const rankings = [];
   let extractionError = null;
   let restoreResult = null;
 
   try {
-    for (const contentBatch of chunk(contents, batchSize)) {
-      const result = await postJson(
-        baseUrl,
-        token,
-        '/api/internal/loadtest/quality/extract-rankings',
-        {
-          sessionId: loadResult.sessionId,
-          datasetVersion: datasetManifest.datasetVersion,
-          retrievalMode,
-          topK,
-          contents: contentBatch.map(toContentPayload),
+    for (const mode of retrievalModes) {
+      const rankings = [];
+      for (const contentBatch of chunk(contents, batchSize)) {
+        const result = await postJson(
+          baseUrl,
+          token,
+          '/api/internal/loadtest/quality/extract-rankings',
+          {
+            sessionId: loadResult.sessionId,
+            datasetVersion: datasetManifest.datasetVersion,
+            retrievalMode: mode,
+            topK,
+            contents: contentBatch.map(toContentPayload),
+          }
+        );
+        if (
+          result.reserveCalled !== false ||
+          result.budgetMutationCount !== 0
+        ) {
+          throw new Error('reserve-free response contract was violated');
         }
-      );
-      if (result.reserveCalled !== false || result.budgetMutationCount !== 0) {
-        throw new Error('reserve-free response contract was violated');
+        rankings.push(...result.rankings);
       }
-      rankings.push(...result.rankings);
-    }
 
-    if (rankings.length !== contents.length) {
-      throw new Error(
-        `ranking count mismatch: ${rankings.length}/${contents.length}`
+      if (rankings.length !== contents.length) {
+        throw new Error(
+          `${mode} ranking count mismatch: ${rankings.length}/${contents.length}`
+        );
+      }
+      const expectedIds = new Set(
+        contents.map((content) => content.contentId)
+      );
+      const rankedIds = new Set(rankings.map((ranking) => ranking.contentId));
+      if (
+        rankedIds.size !== expectedIds.size ||
+        [...expectedIds].some((contentId) => !rankedIds.has(contentId))
+      ) {
+        throw new Error(`${mode} ranking contentId set does not match dataset`);
+      }
+
+      await writeFile(
+        join(outputDirectory, `${mode}.jsonl`),
+        `${rankings.map((ranking) => JSON.stringify(ranking)).join('\n')}\n`,
+        'utf8'
       );
     }
-    const expectedIds = new Set(contents.map((content) => content.contentId));
-    const rankedIds = new Set(rankings.map((ranking) => ranking.contentId));
-    if (
-      rankedIds.size !== expectedIds.size ||
-      [...expectedIds].some((contentId) => !rankedIds.has(contentId))
-    ) {
-      throw new Error('ranking contentId set does not match the dataset');
-    }
-
-    await writeFile(
-      join(outputDirectory, `${retrievalMode}.jsonl`),
-      `${rankings.map((ranking) => JSON.stringify(ranking)).join('\n')}\n`,
-      'utf8'
-    );
   } catch (error) {
     extractionError = error;
   } finally {
@@ -296,6 +313,7 @@ async function main() {
     generatedAt: new Date().toISOString(),
     baseUrl,
     retrievalMode,
+    retrievalModes,
     variant,
     topK,
     batchSize,

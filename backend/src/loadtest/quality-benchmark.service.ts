@@ -137,7 +137,7 @@ export class QualityBenchmarkService {
   ): Promise<{
     sessionId: string;
     datasetVersion: string;
-    retrievalMode: 'dense_only';
+    retrievalMode: 'dense_only' | 'hybrid_shadow';
     topK: number;
     rankings: QualityRanking[];
     reserveCalled: false;
@@ -148,6 +148,7 @@ export class QualityBenchmarkService {
     this.assertIdle();
     const session = this.assertSession(dto.sessionId, dto.datasetVersion);
     const topK = dto.topK ?? 10;
+    const retrievalMode = dto.retrievalMode ?? 'dense_only';
 
     this.operationInProgress = true;
     try {
@@ -167,7 +168,10 @@ export class QualityBenchmarkService {
           behaviorScore: 0,
           isHighIntent: false,
         };
-        const candidates = await this.matcher.findCandidatesByTags(context);
+        const candidates = await this.matcher.findQualityRankings(
+          context,
+          retrievalMode
+        );
         const foreignCandidates = candidates.filter(
           (candidate) => !session.qualityCampaignIds.has(candidate.id)
         );
@@ -220,7 +224,7 @@ export class QualityBenchmarkService {
       return {
         sessionId: session.sessionId,
         datasetVersion: session.datasetVersion,
-        retrievalMode: dto.retrievalMode ?? 'dense_only',
+        retrievalMode,
         topK,
         rankings,
         reserveCalled: false,
