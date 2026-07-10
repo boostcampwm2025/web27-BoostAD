@@ -20,6 +20,8 @@ type BidLogPubSubMessageLabel = 'result';
 type BidLogPubSubEventLabel = 'result';
 type QueueJobLabel = 'queue' | 'state';
 type EmbeddingSourceLabel = 'source';
+type EmbeddingBackgroundLabel = 'result';
+type LexicalFallbackLabel = 'reason';
 
 @Injectable()
 export class MetricsService {
@@ -212,6 +214,28 @@ export class MetricsService {
     name: 'boostad_rtb_embedding_source_total',
     help: 'Request embedding resolution source',
     labelNames: ['source'],
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingBackgroundTotal =
+    new Counter<EmbeddingBackgroundLabel>({
+      name: 'boostad_rtb_embedding_background_total',
+      help: 'Request embedding background warm-up lifecycle',
+      labelNames: ['result'],
+      registers: [this.registry],
+    });
+
+  private readonly rtbLexicalFallbackTotal = new Counter<LexicalFallbackLabel>({
+    name: 'boostad_rtb_lexical_fallback_total',
+    help: 'Cold-miss lexical fallback entries',
+    labelNames: ['reason'],
+    registers: [this.registry],
+  });
+
+  private readonly rtbLexicalCandidateCount = new Histogram({
+    name: 'boostad_rtb_lexical_candidate_count',
+    help: 'Lexical fallback candidate count',
+    buckets: [0, 1, 2, 5, 10, 20, 30, 50, 100, 200, 500, 1000],
     registers: [this.registry],
   });
 
@@ -413,8 +437,21 @@ export class MetricsService {
     if (count > 0) this.rtbEmbeddingRuntimeTotal.inc(count);
   }
 
-  incRtbEmbeddingSource(source: 'tag-L1' | 'tag-L2' | 'runtime') {
+  incRtbEmbeddingSource(source: 'tag-L1' | 'tag-L2' | 'runtime' | 'fallback') {
     this.rtbEmbeddingSourceTotal.inc({ source });
+  }
+
+  recordRtbEmbeddingBackground(
+    result: 'scheduled' | 'deduplicated' | 'completed' | 'failed' | 'dropped'
+  ) {
+    this.rtbEmbeddingBackgroundTotal.inc({ result });
+  }
+
+  recordRtbLexicalFallback(reason: string, candidateCount: number) {
+    this.rtbLexicalFallbackTotal.inc({ reason });
+    if (Number.isFinite(candidateCount) && candidateCount >= 0) {
+      this.rtbLexicalCandidateCount.observe(candidateCount);
+    }
   }
 
   incRtbReservationFailure(reason: string, count = 1) {

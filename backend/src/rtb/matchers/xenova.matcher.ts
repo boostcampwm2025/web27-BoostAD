@@ -8,6 +8,7 @@ import {
 } from '../../campaign/campaign-serving-snapshot.service';
 import { MLEngine } from '../ml/mlEngine.interface';
 import { RequestEmbeddingCacheService } from '../ml/request-embedding-cache.service';
+import type { EmbeddingPendingReason } from '../ml/request-embedding-cache.service';
 import type { DecisionContext, ScoredCandidate } from '../types/decision.types';
 import type { CachedCampaign } from '../../campaign/types/campaign.types';
 import { MetricsService } from '../../metrics/metrics.service';
@@ -53,6 +54,8 @@ export class TransformerMatcher extends Matcher {
   private readonly annTopM: number;
   private readonly annMaxTagHitsPerCampaign: number;
   private readonly localSnapshotEnabled: boolean;
+  private readonly coldMissFastPathEnabled: boolean;
+  private readonly lexicalTopM: number;
 
   constructor(
     private readonly campaignCacheRepo: CampaignCacheRepository,
@@ -81,6 +84,13 @@ export class TransformerMatcher extends Matcher {
           'RTB_MATCHER_LOCAL_SNAPSHOT_ENABLED',
           'false'
         ) === 'true';
+    this.coldMissFastPathEnabled =
+      this.localSnapshotEnabled &&
+      this.configService.get<string>(
+        'RTB_EMBEDDING_COLD_MISS_FAST_PATH_ENABLED',
+        'false'
+      ) === 'true';
+    this.lexicalTopM = this.getPositiveIntEnv('RTB_LEXICAL_TOP_M', 30);
   }
 
   /**
@@ -91,8 +101,14 @@ export class TransformerMatcher extends Matcher {
   async findCandidatesByTags(
     context: DecisionContext
   ): Promise<ScoredCandidate[]> {
-    // ML 모델 준비 안 됐으면 빈 배열 반환 (Scorer에서 태그 매칭으로 커버 예정)
+    const requestText = this.buildRequestText(context.tags);
+    const requestNorm = this.normalizeText(requestText);
+    const requestTokens = new Set(this.tokenizeText(requestText));
+
     if (!this.mlEngine.isReady()) {
+      if (this.coldMissFastPathEnabled) {
+        return this.findCandidatesByLexicalFallback(context, 'model_not_ready');
+      }
       this.metricsService.incRtbFallback('matcher_empty');
       if (this.logsEnabled) {
         this.logger.warn('ML 모델이 준비가 안 되었습니다.');
@@ -100,15 +116,24 @@ export class TransformerMatcher extends Matcher {
       return [];
     }
 
-    const requestText = this.buildRequestText(context.tags);
-    const requestNorm = this.normalizeText(requestText);
-    const requestTokens = new Set(this.tokenizeText(requestText));
-
     let requestEmbedding: number[];
     const requestEmbeddingStartedAt = process.hrtime.bigint();
     try {
-      // 요청 임베딩은 모든 캠페인 비교에서 공통으로 사용되므로 한 번만 계산합니다.
-      requestEmbedding = await this.getEmbeddingCached(requestText);
+      if (this.coldMissFastPathEnabled) {
+        const resolved =
+          await this.requestEmbeddingCache.resolveCachedOrSchedule(requestText);
+        if (resolved.status === 'pending') {
+          this.metricsService.recordRtbStage(
+            'match_request_embedding',
+            'fallback',
+            this.elapsedMs(requestEmbeddingStartedAt)
+          );
+          return this.findCandidatesByLexicalFallback(context, resolved.reason);
+        }
+        requestEmbedding = resolved.embedding;
+      } else {
+        requestEmbedding = await this.getEmbeddingCached(requestText);
+      }
       this.metricsService.recordRtbStage(
         'match_request_embedding',
         'ok',
@@ -116,6 +141,14 @@ export class TransformerMatcher extends Matcher {
       );
       // requestEmbedding = await this.mlEngine.getEmbedding(requestText);
     } catch (error) {
+      if (this.coldMissFastPathEnabled) {
+        this.metricsService.recordRtbStage(
+          'match_request_embedding',
+          'fallback',
+          this.elapsedMs(requestEmbeddingStartedAt)
+        );
+        return this.findCandidatesByLexicalFallback(context, 'cache_error');
+      }
       this.metricsService.recordRtbStage(
         'match_request_embedding',
         'error',
@@ -179,6 +212,79 @@ export class TransformerMatcher extends Matcher {
       requestTokens,
       allCampaigns.length
     );
+  }
+
+  private async findCandidatesByLexicalFallback(
+    context: DecisionContext,
+    reason: EmbeddingPendingReason | 'model_not_ready' | 'cache_error'
+  ): Promise<ScoredCandidate[]> {
+    const startedAt = process.hrtime.bigint();
+    const requestTags = new Set(
+      context.tags.map((tag) => this.normalizeText(tag)).filter(Boolean)
+    );
+    const indexedCampaigns =
+      await this.campaignServingSnapshot.findCampaignsByTags([...requestTags]);
+    const eligibleCampaigns = this.filterEligibleCampaigns(
+      indexedCampaigns,
+      context.isHighIntent,
+      false
+    );
+
+    const candidates = eligibleCampaigns
+      .map((campaign) => {
+        const campaignTags = new Set(
+          (campaign.tags ?? [])
+            .map((tag) => this.normalizeText(tag))
+            .filter(Boolean)
+        );
+        let exactMatchCount = 0;
+        for (const tag of requestTags) {
+          if (campaignTags.has(tag)) {
+            exactMatchCount += 1;
+          }
+        }
+        const coverage =
+          requestTags.size === 0 ? 0 : exactMatchCount / requestTags.size;
+        return {
+          ...campaign,
+          embeddingTags: undefined,
+          similarity: coverage,
+          score: exactMatchCount * 100 + coverage * 10,
+          exactMatchCount,
+        };
+      })
+      .filter((candidate) => candidate.exactMatchCount > 0)
+      .sort((a, b) => {
+        if (b.exactMatchCount !== a.exactMatchCount) {
+          return b.exactMatchCount - a.exactMatchCount;
+        }
+        if (b.similarity !== a.similarity) {
+          return b.similarity - a.similarity;
+        }
+        if (b.maxCpc !== a.maxCpc) {
+          return b.maxCpc - a.maxCpc;
+        }
+        return a.id.localeCompare(b.id);
+      })
+      .slice(0, this.lexicalTopM)
+      .map(({ exactMatchCount: _exactMatchCount, ...candidate }) => candidate);
+
+    this.metricsService.incRtbEmbeddingSource('fallback');
+    this.metricsService.recordRtbLexicalFallback(reason, candidates.length);
+    this.metricsService.incRtbFallback(`embedding_${reason}`);
+    this.metricsService.recordRtbStage(
+      'match_lexical_fallback',
+      candidates.length > 0 ? 'ok' : 'fallback',
+      this.elapsedMs(startedAt)
+    );
+    this.metricsService.observeRtbEligibleCampaignCount(
+      eligibleCampaigns.length
+    );
+
+    if (candidates.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
+    }
+    return candidates;
   }
 
   private getPositiveIntEnv(name: string, defaultValue: number): number {
@@ -398,7 +504,8 @@ export class TransformerMatcher extends Matcher {
   // 비딩 자격 필터링: ACTIVE + 날짜 범위 + deletedAt + embeddingTags 존재
   private filterEligibleCampaigns(
     campaigns: MatchableCampaign[],
-    isHighIntent: boolean
+    isHighIntent: boolean,
+    requireEmbeddings = true
   ): MatchableCampaign[] {
     const now = new Date();
 
@@ -423,8 +530,9 @@ export class TransformerMatcher extends Matcher {
 
       // embeddingTags 존재 여부 (임베딩 없으면 유사도 계산 불가)
       if (
-        !campaign.embeddingTags ||
-        Object.keys(campaign.embeddingTags).length === 0
+        requireEmbeddings &&
+        (!campaign.embeddingTags ||
+          Object.keys(campaign.embeddingTags).length === 0)
       ) {
         return false;
       }

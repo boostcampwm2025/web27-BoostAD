@@ -14,6 +14,16 @@ export type EmbeddingResolveResult = {
   cacheKey: string;
 };
 
+export type EmbeddingPendingReason = 'miss' | 'timeout' | 'error' | 'in-flight';
+
+export type EmbeddingCacheProbeResult =
+  | (EmbeddingResolveResult & { status: 'ready' })
+  | {
+      status: 'pending';
+      reason: EmbeddingPendingReason;
+      cacheKey: string;
+    };
+
 type FlightResult = {
   embedding: number[];
   source: EmbeddingSource;
@@ -34,6 +44,10 @@ export class RequestEmbeddingCacheService {
   private readonly l2WriteBudgetMs: number;
   private readonly l2TtlSeconds: number;
   private readonly l2Enabled: boolean;
+  private readonly backgroundMaxConcurrency: number;
+  private readonly backgroundMaxQueueSize: number;
+  private backgroundActive = 0;
+  private readonly backgroundQueue: Array<() => void> = [];
 
   constructor(
     private readonly mlEngine: MLEngine,
@@ -57,6 +71,14 @@ export class RequestEmbeddingCacheService {
     this.l2Enabled =
       this.configService.get<string>('RTB_EMBEDDING_L2_ENABLED', 'true') ===
       'true';
+    this.backgroundMaxConcurrency = this.getPositiveInt(
+      'RTB_EMBEDDING_BACKGROUND_MAX_CONCURRENCY',
+      1
+    );
+    this.backgroundMaxQueueSize = this.getPositiveInt(
+      'RTB_EMBEDDING_BACKGROUND_MAX_QUEUE_SIZE',
+      100
+    );
   }
 
   buildCacheKey(text: string, modelVersion = this.mlEngine.getModelVersion()) {
@@ -79,6 +101,13 @@ export class RequestEmbeddingCacheService {
 
   getInFlightSize() {
     return this.inFlight.size;
+  }
+
+  getBackgroundState() {
+    return {
+      active: this.backgroundActive,
+      queued: this.backgroundQueue.length,
+    };
   }
 
   async resolve(text: string): Promise<EmbeddingResolveResult> {
@@ -121,18 +150,67 @@ export class RequestEmbeddingCacheService {
     }
   }
 
+  async resolveCachedOrSchedule(
+    text: string
+  ): Promise<EmbeddingCacheProbeResult> {
+    const cacheKey = this.buildCacheKey(text);
+    const l1Hit = this.getFromL1(cacheKey);
+    if (l1Hit) {
+      this.metricsService.incRtbEmbeddingL1Hit();
+      this.metricsService.incRtbEmbeddingSource('tag-L1');
+      return {
+        status: 'ready',
+        embedding: l1Hit,
+        source: 'tag-L1',
+        cacheKey,
+      };
+    }
+
+    this.metricsService.incRtbEmbeddingL1Miss();
+    if (this.inFlight.has(cacheKey)) {
+      this.metricsService.recordRtbEmbeddingBackground('deduplicated');
+      return { status: 'pending', reason: 'in-flight', cacheKey };
+    }
+
+    let pendingReason: EmbeddingPendingReason = 'miss';
+    if (this.l2Enabled) {
+      const l2 = await this.getFromL2WithBudget(cacheKey);
+      if (l2.status === 'hit') {
+        this.setL1(cacheKey, l2.embedding);
+        this.metricsService.incRtbEmbeddingSource('tag-L2');
+        return {
+          status: 'ready',
+          embedding: l2.embedding,
+          source: 'tag-L2',
+          cacheKey,
+        };
+      }
+      pendingReason = l2.status;
+    }
+
+    this.startBackgroundGeneration(text, cacheKey);
+    return { status: 'pending', reason: pendingReason, cacheKey };
+  }
+
   private async loadOrGenerate(
     text: string,
     cacheKey: string
   ): Promise<FlightResult> {
     if (this.l2Enabled) {
       const l2 = await this.getFromL2WithBudget(cacheKey);
-      if (l2.status === 'hit' && l2.embedding) {
+      if (l2.status === 'hit') {
         this.setL1(cacheKey, l2.embedding);
         return { embedding: l2.embedding, source: 'tag-L2' };
       }
     }
 
+    return this.generateAndStore(text, cacheKey);
+  }
+
+  private async generateAndStore(
+    text: string,
+    cacheKey: string
+  ): Promise<FlightResult> {
     this.metricsService.incRtbEmbeddingRuntime();
     const embedding = await this.mlEngine.getEmbedding(text);
     if (!this.isValidEmbedding(embedding)) {
@@ -143,6 +221,62 @@ export class RequestEmbeddingCacheService {
       await this.setL2WithBudget(cacheKey, embedding);
     }
     return { embedding, source: 'runtime' };
+  }
+
+  private startBackgroundGeneration(text: string, cacheKey: string): void {
+    if (this.inFlight.has(cacheKey)) {
+      this.metricsService.recordRtbEmbeddingBackground('deduplicated');
+      return;
+    }
+
+    if (
+      this.backgroundActive >= this.backgroundMaxConcurrency &&
+      this.backgroundQueue.length >= this.backgroundMaxQueueSize
+    ) {
+      this.metricsService.recordRtbEmbeddingBackground('dropped');
+      return;
+    }
+
+    this.metricsService.recordRtbEmbeddingBackground('scheduled');
+    const flight = new Promise<FlightResult>((resolve, reject) => {
+      const task = () => {
+        this.backgroundActive += 1;
+        void this.generateAndStore(text, cacheKey)
+          .then(resolve, reject)
+          .finally(() => {
+            this.backgroundActive -= 1;
+            this.drainBackgroundQueue();
+          });
+      };
+
+      if (this.backgroundActive < this.backgroundMaxConcurrency) {
+        task();
+      } else {
+        this.backgroundQueue.push(task);
+      }
+    });
+    this.inFlight.set(cacheKey, flight);
+    void flight
+      .then(() => {
+        this.metricsService.recordRtbEmbeddingBackground('completed');
+      })
+      .catch(() => {
+        this.metricsService.recordRtbEmbeddingBackground('failed');
+      })
+      .finally(() => {
+        if (this.inFlight.get(cacheKey) === flight) {
+          this.inFlight.delete(cacheKey);
+        }
+      });
+  }
+
+  private drainBackgroundQueue(): void {
+    while (
+      this.backgroundActive < this.backgroundMaxConcurrency &&
+      this.backgroundQueue.length > 0
+    ) {
+      this.backgroundQueue.shift()?.();
+    }
   }
 
   private getFromL1(cacheKey: string): number[] | null {

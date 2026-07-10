@@ -20,6 +20,7 @@ describe('RequestEmbeddingCacheService', () => {
     observeRtbEmbeddingSingleflightDuration: jest.Mock;
     incRtbEmbeddingRuntime: jest.Mock;
     incRtbEmbeddingSource: jest.Mock;
+    recordRtbEmbeddingBackground: jest.Mock;
   };
 
   type RedisMock = {
@@ -40,6 +41,7 @@ describe('RequestEmbeddingCacheService', () => {
     observeRtbEmbeddingSingleflightDuration: jest.fn(),
     incRtbEmbeddingRuntime: jest.fn(),
     incRtbEmbeddingSource: jest.fn(),
+    recordRtbEmbeddingBackground: jest.fn(),
   });
 
   const buildConfig = (overrides: Record<string, string> = {}) =>
@@ -119,8 +121,9 @@ describe('RequestEmbeddingCacheService', () => {
   };
 
   const flushMicrotasks = async () => {
-    await Promise.resolve();
-    await Promise.resolve();
+    for (let index = 0; index < 8; index += 1) {
+      await Promise.resolve();
+    }
   };
 
   it('U1: concurrent same tags share one runtime and one L2 SET', async () => {
@@ -401,5 +404,81 @@ describe('RequestEmbeddingCacheService', () => {
     });
     expect(metrics.incRtbEmbeddingL2Error).toHaveBeenCalledTimes(1);
     expect(redis.set).toHaveBeenCalledTimes(1);
+  });
+
+  it('3B-U1: cold miss schedules one background runtime without awaiting it', async () => {
+    const { service, metrics, ml } = buildService();
+
+    const result = await service.resolveCachedOrSchedule('brand new tags');
+
+    expect(result).toMatchObject({ status: 'pending', reason: 'miss' });
+    expect(ml.getEmbedding).toHaveBeenCalledTimes(1);
+    expect(service.getInFlightSize()).toBe(1);
+    expect(metrics.recordRtbEmbeddingBackground).toHaveBeenCalledWith(
+      'scheduled'
+    );
+
+    ml.resolveEmbedding(embeddingA);
+    await flushMicrotasks();
+    const warmed = await service.resolveCachedOrSchedule('brand new tags');
+    expect(warmed).toMatchObject({ status: 'ready', source: 'tag-L1' });
+  });
+
+  it('3B-U2: concurrent cold probes deduplicate background generation', async () => {
+    const { service, metrics, ml } = buildService();
+
+    const [first, second] = await Promise.all([
+      service.resolveCachedOrSchedule('same cold tags'),
+      service.resolveCachedOrSchedule('same cold tags'),
+    ]);
+
+    expect(first.status).toBe('pending');
+    expect(second.status).toBe('pending');
+    expect(ml.getEmbedding).toHaveBeenCalledTimes(1);
+    expect(metrics.recordRtbEmbeddingBackground).toHaveBeenCalledWith(
+      'deduplicated'
+    );
+    ml.resolveEmbedding(embeddingA);
+    await flushMicrotasks();
+  });
+
+  it('3B-U3: L2 hit stays on the vector-ready path', async () => {
+    const redis = buildRedis();
+    redis.get.mockResolvedValue(JSON.stringify(embeddingA));
+    const ml = buildMlEngine();
+    const { service } = buildService({ redis, ml });
+
+    await expect(
+      service.resolveCachedOrSchedule('shared tags')
+    ).resolves.toMatchObject({
+      status: 'ready',
+      source: 'tag-L2',
+      embedding: embeddingA,
+    });
+    expect(ml.getEmbedding).not.toHaveBeenCalled();
+  });
+
+  it('3B-U4: background queue drops excess unique cold misses', async () => {
+    const { service, metrics, ml } = buildService({
+      overrides: {
+        RTB_EMBEDDING_BACKGROUND_MAX_CONCURRENCY: '1',
+        RTB_EMBEDDING_BACKGROUND_MAX_QUEUE_SIZE: '1',
+      },
+    });
+
+    const results = await Promise.all([
+      service.resolveCachedOrSchedule('cold one'),
+      service.resolveCachedOrSchedule('cold two'),
+      service.resolveCachedOrSchedule('cold three'),
+    ]);
+
+    expect(results.every((result) => result.status === 'pending')).toBe(true);
+    expect(ml.getEmbedding).toHaveBeenCalledTimes(1);
+    expect(service.getBackgroundState()).toEqual({ active: 1, queued: 1 });
+    expect(metrics.recordRtbEmbeddingBackground).toHaveBeenCalledWith(
+      'dropped'
+    );
+    ml.resolveEmbedding(embeddingA);
+    await flushMicrotasks();
   });
 });

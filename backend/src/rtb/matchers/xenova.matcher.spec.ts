@@ -55,6 +55,8 @@ describe('TransformerMatcher ANN path', () => {
       incRtbEmbeddingSingleflightWait: jest.fn(),
       incRtbEmbeddingRuntime: jest.fn(),
       incRtbEmbeddingSource: jest.fn(),
+      recordRtbEmbeddingBackground: jest.fn(),
+      recordRtbLexicalFallback: jest.fn(),
     }) as unknown as MetricsService;
 
   const buildConfigService = (overrides?: Record<string, string>) =>
@@ -148,8 +150,16 @@ describe('TransformerMatcher ANN path', () => {
           })
         )
       ),
+      findCampaignsByTags: jest.fn((tags: string[]) =>
+        Promise.resolve(
+          campaigns.filter((campaign) =>
+            campaign.tags?.some((tag) => tags.includes(tag.toLowerCase()))
+          )
+        )
+      ),
     }) as unknown as CampaignServingSnapshotService & {
       findCampaignsByIds: jest.Mock;
+      findCampaignsByTags: jest.Mock;
     };
 
   beforeAll(() => {
@@ -325,6 +335,105 @@ describe('TransformerMatcher ANN path', () => {
 
     expect(mlEngine.getEmbedding).toHaveBeenCalledTimes(1);
     expect(mlEngine.getEmbedding).toHaveBeenCalledWith('café react');
+  });
+
+  it('3B-M1: cold embedding miss returns ranked lexical candidates immediately', async () => {
+    const exact = {
+      ...buildCampaign('c1', ['react', 'typescript'], {}),
+      maxCpc: 100,
+    };
+    const partial = {
+      ...buildCampaign('c2', ['react'], {}),
+      maxCpc: 500,
+    };
+    const unrelated = buildCampaign('c3', ['redis'], {});
+    const campaigns = [exact, partial, unrelated];
+    const repository = buildRepository(campaigns);
+    const snapshot = buildSnapshot(campaigns);
+    const mlEngine = buildMlEngine() as unknown as {
+      getEmbedding: jest.Mock;
+    };
+    const metrics = buildMetricsService();
+    const matcher = buildMatcher(
+      repository,
+      snapshot,
+      mlEngine as unknown as MLEngine,
+      metrics,
+      buildConfigService({
+        RTB_MATCHER_ANN_ENABLED: 'true',
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_EMBEDDING_COLD_MISS_FAST_PATH_ENABLED: 'true',
+      })
+    );
+
+    const candidates = await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['TypeScript', 'React'],
+      postUrl: 'https://example.com/post',
+      behaviorScore: 20,
+      isHighIntent: false,
+    });
+
+    expect(candidates.map((candidate) => candidate.id)).toEqual(['c1', 'c2']);
+    expect(repository.searchCampaignTagVectors).not.toHaveBeenCalled();
+    expect(snapshot.findCampaignsByTags).toHaveBeenCalledWith([
+      'typescript',
+      'react',
+    ]);
+    expect(mlEngine.getEmbedding).toHaveBeenCalledTimes(1);
+    const metricsMock = metrics as unknown as {
+      incRtbEmbeddingSource: jest.Mock;
+      recordRtbLexicalFallback: jest.Mock;
+    };
+    expect(metricsMock.incRtbEmbeddingSource).toHaveBeenCalledWith('fallback');
+    expect(metricsMock.recordRtbLexicalFallback).toHaveBeenCalledWith(
+      'miss',
+      2
+    );
+  });
+
+  it('3B-M2: model-not-ready still serves lexical candidates without runtime', async () => {
+    const campaign = buildCampaign('c1', ['react'], {});
+    const repository = buildRepository([campaign]);
+    const snapshot = buildSnapshot([campaign]);
+    const mlEngine = buildMlEngine() as unknown as {
+      isReady: jest.Mock;
+      getEmbedding: jest.Mock;
+    };
+    mlEngine.isReady.mockReturnValue(false);
+    const metrics = buildMetricsService();
+    const matcher = buildMatcher(
+      repository,
+      snapshot,
+      mlEngine as unknown as MLEngine,
+      metrics,
+      buildConfigService({
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_EMBEDDING_COLD_MISS_FAST_PATH_ENABLED: 'true',
+      })
+    );
+
+    const candidates = await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['react'],
+      postUrl: 'https://example.com/post',
+      behaviorScore: 20,
+      isHighIntent: false,
+    });
+
+    expect(candidates.map((candidate) => candidate.id)).toEqual(['c1']);
+    expect(mlEngine.getEmbedding).not.toHaveBeenCalled();
+    const metricsMock = metrics as unknown as {
+      recordRtbLexicalFallback: jest.Mock;
+    };
+    expect(metricsMock.recordRtbLexicalFallback).toHaveBeenCalledWith(
+      'model_not_ready',
+      1
+    );
   });
 
   it('hydrates ANN candidates from the local snapshot when enabled', async () => {

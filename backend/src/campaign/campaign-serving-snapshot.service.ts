@@ -20,6 +20,7 @@ type CampaignServingSnapshotState = {
   version: number;
   builtAtMs: number;
   campaignsById: ReadonlyMap<string, ServingCampaign>;
+  campaignIdsByTag: ReadonlyMap<string, ReadonlySet<string>>;
 };
 
 @Injectable()
@@ -29,6 +30,7 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
     version: 0,
     builtAtMs: 0,
     campaignsById: new Map(),
+    campaignIdsByTag: new Map(),
   };
   private initialized = false;
   private initializationInFlight: Promise<void> | null = null;
@@ -84,11 +86,33 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
     });
   }
 
-  getMetadata(): { version: number; builtAtMs: number; size: number } {
+  async findCampaignsByTags(tags: string[]): Promise<ServingCampaign[]> {
+    await this.ensureInitialized();
+
+    const campaignIds = new Set<string>();
+    for (const tag of this.normalizeTags(tags)) {
+      for (const campaignId of this.state.campaignIdsByTag.get(tag) ?? []) {
+        campaignIds.add(campaignId);
+      }
+    }
+
+    return [...campaignIds].flatMap((campaignId) => {
+      const campaign = this.state.campaignsById.get(campaignId);
+      return campaign ? [campaign] : [];
+    });
+  }
+
+  getMetadata(): {
+    version: number;
+    builtAtMs: number;
+    size: number;
+    tagCount: number;
+  } {
     return {
       version: this.state.version,
       builtAtMs: this.state.builtAtMs,
       size: this.state.campaignsById.size,
+      tagCount: this.state.campaignIdsByTag.size,
     };
   }
 
@@ -152,6 +176,7 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
       version: this.state.version + 1,
       builtAtMs: Date.now(),
       campaignsById,
+      campaignIdsByTag: this.buildTagIndex(campaignsById),
     };
     this.initialized = true;
     this.mutationsDuringInitialization.clear();
@@ -177,6 +202,7 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
       version: this.state.version + 1,
       builtAtMs: Date.now(),
       campaignsById,
+      campaignIdsByTag: this.buildTagIndex(campaignsById),
     };
   }
 
@@ -191,6 +217,7 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
       version: this.state.version + 1,
       builtAtMs: Date.now(),
       campaignsById,
+      campaignIdsByTag: this.buildTagIndex(campaignsById),
     };
   }
 
@@ -217,5 +244,31 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
       ...campaign,
       embeddingTags,
     };
+  }
+
+  private buildTagIndex(
+    campaignsById: ReadonlyMap<string, ServingCampaign>
+  ): ReadonlyMap<string, ReadonlySet<string>> {
+    const index = new Map<string, Set<string>>();
+    for (const campaign of campaignsById.values()) {
+      for (const tag of this.normalizeTags(campaign.tags ?? [])) {
+        const campaignIds = index.get(tag) ?? new Set<string>();
+        campaignIds.add(campaign.id);
+        index.set(tag, campaignIds);
+      }
+    }
+    return index;
+  }
+
+  private normalizeTags(tags: string[]): string[] {
+    return [
+      ...new Set(
+        tags
+          .map((tag) =>
+            tag.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim()
+          )
+          .filter(Boolean)
+      ),
+    ];
   }
 }

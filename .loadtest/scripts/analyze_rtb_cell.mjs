@@ -194,6 +194,62 @@ const result = {
           'source',
           'runtime'
         ),
+        fallback: counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_embedding_source_total',
+          'source',
+          'fallback'
+        ),
+      },
+      background: {
+        scheduled: counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_embedding_background_total',
+          'result',
+          'scheduled'
+        ),
+        deduplicated: counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_embedding_background_total',
+          'result',
+          'deduplicated'
+        ),
+        completed: counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_embedding_background_total',
+          'result',
+          'completed'
+        ),
+        failed: counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_embedding_background_total',
+          'result',
+          'failed'
+        ),
+        dropped: counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_embedding_background_total',
+          'result',
+          'dropped'
+        ),
+      },
+      lexicalFallback: {
+        total: counterDeltaByMetric(
+          before,
+          after,
+          'boostad_rtb_lexical_fallback_total'
+        ),
+        candidates: histogramDelta(
+          before,
+          after,
+          'boostad_rtb_lexical_candidate_count'
+        ),
       },
     },
     cpuSeconds: counterDeltaByMetric(

@@ -127,6 +127,48 @@ describe('CampaignServingSnapshotService', () => {
     });
   });
 
+  it('serves normalized tag unions from the local inverted index', async () => {
+    const first = { ...buildCampaign('c1'), tags: ['React', 'TypeScript'] };
+    const second = { ...buildCampaign('c2'), tags: ['Redis'] };
+    const repository = buildRepository([first, second]);
+    const service = new CampaignServingSnapshotService(
+      repository,
+      configService
+    );
+
+    const campaigns = await service.findCampaignsByTags([
+      ' react ',
+      'REDIS',
+      'react',
+    ]);
+
+    expect(campaigns.map((campaign) => campaign.id)).toEqual(['c1', 'c2']);
+    expect(service.getMetadata().tagCount).toBe(3);
+    expect(repository.findCampaignCachesByIds).not.toHaveBeenCalled();
+  });
+
+  it('keeps the tag index synchronized with upsert and remove events', async () => {
+    const first = { ...buildCampaign('c1'), tags: ['before'] };
+    const updated = { ...buildCampaign('c1'), tags: ['after'] };
+    const repository = buildRepository([first]);
+    const service = new CampaignServingSnapshotService(
+      repository,
+      configService
+    );
+    await service.findCampaignsByTags(['before']);
+
+    service.onCampaignCacheUpserted({ campaign: updated });
+    await expect(service.findCampaignsByTags(['before'])).resolves.toEqual([]);
+    await expect(
+      service
+        .findCampaignsByTags(['after'])
+        .then((campaigns) => campaigns.map((campaign) => campaign.id))
+    ).resolves.toEqual(['c1']);
+
+    service.onCampaignCacheRemoved({ campaignId: 'c1' });
+    await expect(service.findCampaignsByTags(['after'])).resolves.toEqual([]);
+  });
+
   it('does not lose mutations that arrive while the initial snapshot is loading', async () => {
     const stale = buildCampaign('c1');
     const updated = { ...buildCampaign('c1'), title: 'updated' };
