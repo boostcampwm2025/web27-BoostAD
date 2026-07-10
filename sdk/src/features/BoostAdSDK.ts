@@ -25,6 +25,7 @@ export class BoostAdSDK {
   private debounceTimer: ReturnType<typeof setTimeout> | null = null; // DOM 변화 감지 디바운스
   private contextId: string | undefined;
   private contextUrl: string | undefined;
+  private readonly CONTEXT_BODY_MAX_CHARS = 8_000;
   private readonly CONTENT_SELECTORS = [
     '#article',
     '#area_view',
@@ -240,7 +241,9 @@ export class BoostAdSDK {
     const contentArea = this.findContentArea();
     const title =
       document.querySelector('h1')?.textContent?.trim() || document.title;
-    const body = contentArea?.textContent?.trim();
+    const body = contentArea?.textContent
+      ?.trim()
+      .slice(0, this.CONTEXT_BODY_MAX_CHARS);
     this.contextId = await this.apiClient.observeContext(
       tags,
       postUrl,
