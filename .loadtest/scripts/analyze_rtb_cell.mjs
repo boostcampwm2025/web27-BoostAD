@@ -72,6 +72,44 @@ const result = {
       'boostad_rtb_fallback_total'
     ),
     reservationRejected,
+    stages: Object.fromEntries(
+      ['match', 'reserve', 'rollback', 'total'].map((stage) => [
+        stage,
+        durationHistogramDelta(
+          before,
+          after,
+          'boostad_rtb_stage_duration_seconds',
+          { stage }
+        ),
+      ])
+    ),
+    fanout: {
+      matchedCandidates: histogramDelta(
+        before,
+        after,
+        'boostad_rtb_candidate_count'
+      ),
+      reserveAttempts: histogramDelta(
+        before,
+        after,
+        'boostad_rtb_reserve_attempt_candidate_count'
+      ),
+      reservedCandidates: histogramDelta(
+        before,
+        after,
+        'boostad_rtb_reserved_candidate_count'
+      ),
+      rollbackCandidates: histogramDelta(
+        before,
+        after,
+        'boostad_rtb_rollback_candidate_count'
+      ),
+    },
+    cpuSeconds: counterDeltaByMetric(
+      before,
+      after,
+      'boostad_backend_process_cpu_seconds_total'
+    ),
   },
   labels: {
     budgetContaminated: reservationRejected > 0,
@@ -155,6 +193,35 @@ function counterDeltaByLabel(
   return counterDelta(beforeSamples, afterSamples, metric, {
     [labelName]: labelValue,
   });
+}
+
+function histogramDelta(beforeSamples, afterSamples, metric, labels = {}) {
+  const sum = counterDelta(beforeSamples, afterSamples, `${metric}_sum`, labels);
+  const count = counterDelta(
+    beforeSamples,
+    afterSamples,
+    `${metric}_count`,
+    labels
+  );
+  return {
+    count,
+    sum,
+    avg: count > 0 ? sum / count : null,
+  };
+}
+
+function durationHistogramDelta(
+  beforeSamples,
+  afterSamples,
+  metric,
+  labels = {}
+) {
+  const delta = histogramDelta(beforeSamples, afterSamples, metric, labels);
+  return {
+    count: delta.count,
+    sumSeconds: delta.sum,
+    avgMs: delta.avg === null ? null : delta.avg * 1000,
+  };
 }
 
 function sampleSum(samples, metric, expectedLabels) {
