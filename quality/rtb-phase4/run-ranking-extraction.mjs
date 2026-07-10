@@ -117,6 +117,7 @@ async function main() {
   const campaigns = parseJsonLines(campaignText);
   const contents = parseJsonLines(contentText);
   const datasetManifest = JSON.parse(manifestText);
+  await mkdir(outputDirectory, { recursive: true });
   const loadResult = await postJson(
     baseUrl,
     token,
@@ -125,6 +126,21 @@ async function main() {
       datasetVersion: datasetManifest.datasetVersion,
       campaigns: campaigns.map(toCampaignPayload),
     }
+  );
+  const sessionPath = join(outputDirectory, 'session.json');
+  await writeFile(
+    sessionPath,
+    `${JSON.stringify(
+      {
+        sessionId: loadResult.sessionId,
+        datasetVersion: datasetManifest.datasetVersion,
+        restored: false,
+        recoveryEndpoint: '/api/internal/loadtest/quality/restore-campaigns',
+      },
+      null,
+      2
+    )}\n`,
+    'utf8'
   );
   const rankings = [];
   let extractionError = null;
@@ -164,7 +180,6 @@ async function main() {
       throw new Error('ranking contentId set does not match the dataset');
     }
 
-    await mkdir(outputDirectory, { recursive: true });
     await writeFile(
       join(outputDirectory, `${retrievalMode}.jsonl`),
       `${rankings.map((ranking) => JSON.stringify(ranking)).join('\n')}\n`,
@@ -180,7 +195,40 @@ async function main() {
         '/api/internal/loadtest/quality/restore-campaigns',
         { sessionId: loadResult.sessionId }
       );
+      await writeFile(
+        sessionPath,
+        `${JSON.stringify(
+          {
+            sessionId: loadResult.sessionId,
+            datasetVersion: datasetManifest.datasetVersion,
+            restored: true,
+            restoredAt: new Date().toISOString(),
+          },
+          null,
+          2
+        )}\n`,
+        'utf8'
+      );
     } catch (restoreError) {
+      await writeFile(
+        sessionPath,
+        `${JSON.stringify(
+          {
+            sessionId: loadResult.sessionId,
+            datasetVersion: datasetManifest.datasetVersion,
+            restored: false,
+            restoreError:
+              restoreError instanceof Error
+                ? restoreError.message
+                : String(restoreError),
+            recoveryEndpoint:
+              '/api/internal/loadtest/quality/restore-campaigns',
+          },
+          null,
+          2
+        )}\n`,
+        'utf8'
+      );
       throw new AggregateError(
         [extractionError, restoreError].filter(Boolean),
         'ranking extraction and/or serving cache restore failed'
