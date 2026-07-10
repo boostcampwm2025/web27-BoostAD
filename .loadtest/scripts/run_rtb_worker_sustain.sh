@@ -82,7 +82,7 @@ runtime_inference_total() {
 }
 
 failed_jobs() {
-  docker exec boostad-redis-master-local redis-cli ZCARD bull:embedding-queue:failed 2>/dev/null || echo 0
+  redis_cli ZCARD "$(embedding_queue_key failed)" 2>/dev/null || echo 0
 }
 
 run_rate_cell() {

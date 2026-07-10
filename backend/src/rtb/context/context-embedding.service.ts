@@ -8,6 +8,7 @@ import type { AppIORedisClient } from '../../redis/redis.type';
 import { MetricsService } from '../../metrics/metrics.service';
 import { MLEngine } from '../ml/mlEngine.interface';
 import type { ContextEmbeddingJobData } from '../../queue/types/queue.type';
+import { EMBEDDING_QUEUE_NAME } from '../../queue/queue.names';
 
 export type ContextEmbeddingStatus = 'READY' | 'PENDING' | 'FAILED';
 
@@ -54,7 +55,7 @@ export class ContextEmbeddingService {
     private readonly metricsService: MetricsService,
     private readonly configService: ConfigService,
     @Inject(IOREDIS_CLIENT) private readonly redis: AppIORedisClient,
-    @InjectQueue('embedding-queue')
+    @InjectQueue(EMBEDDING_QUEUE_NAME)
     private readonly embeddingQueue: Queue<ContextEmbeddingJobData>
   ) {
     this.maxBodyChars = this.getPositiveInt(

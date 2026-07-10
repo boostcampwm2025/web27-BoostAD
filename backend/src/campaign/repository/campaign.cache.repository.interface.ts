@@ -3,6 +3,8 @@ import {
   BudgetReservationResult,
   CachedCampaign,
   CachedCampaignWithoutSpent,
+  CampaignDocumentVectorSearchHit,
+  CampaignEmbeddingPayload,
   CampaignTagVectorSearchHit,
   CampaignTagVectorSearchOptions,
 } from '../types/campaign.types';
@@ -54,6 +56,11 @@ export abstract class CampaignCacheRepository {
     embeddingTags: { [tagName: string]: number[] }
   ): Promise<void>;
 
+  abstract updateCampaignEmbeddings(
+    id: string,
+    payload: CampaignEmbeddingPayload
+  ): Promise<void>;
+
   abstract deleteCampaignCacheById(id: string): Promise<void>;
   abstract existsCampaignCacheById(id: string): Promise<boolean>;
 
@@ -68,4 +75,8 @@ export abstract class CampaignCacheRepository {
   abstract searchCampaignTagVectors(
     options: CampaignTagVectorSearchOptions
   ): Promise<CampaignTagVectorSearchHit[]>;
+
+  abstract searchCampaignDocumentVectors(
+    options: CampaignTagVectorSearchOptions
+  ): Promise<CampaignDocumentVectorSearchHit[]>;
 }

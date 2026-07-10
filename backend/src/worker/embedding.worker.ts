@@ -7,8 +7,10 @@ import { CampaignCacheRepository } from 'src/campaign/repository/campaign.cache.
 import { ContextEmbeddingService } from 'src/rtb/context/context-embedding.service';
 import type { ContextEmbeddingJobData } from 'src/queue/types/queue.type';
 import { MetricsService } from 'src/metrics/metrics.service';
+import { buildCampaignDocumentText } from 'src/rtb/ml/embedding-text';
+import { EMBEDDING_QUEUE_NAME } from 'src/queue/queue.names';
 
-@Processor('embedding-queue', { autorun: false })
+@Processor(EMBEDDING_QUEUE_NAME, { autorun: false })
 export class EmbeddingWorker
   extends WorkerHost
   implements OnApplicationBootstrap
@@ -53,9 +55,15 @@ export class EmbeddingWorker
 
     try {
       if (job.name === 'generate-campaign-embedding') {
-        const { campaignId } = job.data as {
+        const { campaignId, modelVersion } = job.data as {
           campaignId: string;
+          modelVersion?: string;
         };
+        if (modelVersion && modelVersion !== this.mlEngine.getModelVersion()) {
+          throw new Error(
+            `campaign job model version 불일치: ${modelVersion} vs ${this.mlEngine.getModelVersion()}`
+          );
+        }
         await this.generateCampaignEmbedding(campaignId);
       } else if (job.name === 'generate-context-embedding') {
         await this.generateContextEmbedding(
@@ -73,7 +81,15 @@ export class EmbeddingWorker
   private async generateContextEmbedding(job: Job<ContextEmbeddingJobData>) {
     const startedAt = process.hrtime.bigint();
     try {
-      const embedding = await this.mlEngine.getEmbedding(job.data.text);
+      if (job.data.modelVersion !== this.mlEngine.getModelVersion()) {
+        throw new Error(
+          `context job model version 불일치: ${job.data.modelVersion} vs ${this.mlEngine.getModelVersion()}`
+        );
+      }
+      const embedding = await this.mlEngine.getEmbedding(
+        job.data.text,
+        'query'
+      );
       await this.contextEmbeddingService.completeJob(job.data, embedding);
       this.metricsService.recordRtbContextJob('completed');
     } catch (error) {
@@ -106,19 +122,25 @@ export class EmbeddingWorker
       return;
     }
 
-    // 2. 각 태그별로 임베딩 생성
+    // 2. E5 retrieval 계약에 따라 캠페인은 passage로 생성한다.
     const embeddingTags: { [tagName: string]: number[] } = {};
 
     for (const tagName of campaign.tags) {
-      const embedding = await this.mlEngine.getEmbedding(tagName);
+      const embedding = await this.mlEngine.getEmbedding(tagName, 'passage');
       embeddingTags[tagName] = embedding;
     }
 
-    // 3. Redis에 태그별 임베딩 저장
-    await this.campaignCacheRepository.updateCampaignEmbeddingTags(
-      campaignId,
-      embeddingTags
+    const document = await this.mlEngine.getEmbedding(
+      buildCampaignDocumentText(campaign),
+      'passage'
     );
+
+    // 3. model version, document, tag vector를 한 번에 publish한다.
+    await this.campaignCacheRepository.updateCampaignEmbeddings(campaignId, {
+      modelVersion: this.mlEngine.getModelVersion(),
+      document,
+      tags: embeddingTags,
+    });
 
     this.logger.log(
       `✅ ID:${campaignId.slice(0, 8)}... title:${campaign.title.slice(0, 15)}... 임베딩 생성 완료 (${campaign.tags.length}개 태그)`

@@ -225,7 +225,7 @@ export class RequestEmbeddingCacheService {
     cacheKey: string
   ): Promise<FlightResult> {
     this.metricsService.incRtbEmbeddingRuntime();
-    const embedding = await this.mlEngine.getEmbedding(text);
+    const embedding = await this.mlEngine.getEmbedding(text, 'query');
     if (!this.isValidEmbedding(embedding)) {
       throw new Error('Runtime embedding payload is invalid');
     }

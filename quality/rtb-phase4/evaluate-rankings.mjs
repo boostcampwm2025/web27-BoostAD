@@ -287,6 +287,49 @@ export function compareEvaluations(control, candidate, k = 10) {
   };
 }
 
+export function summarizeEvaluationBy(contents, evaluation, field) {
+  const contentById = new Map(
+    contents.map((content) => [content.contentId, content])
+  );
+  const groups = new Map();
+  for (const query of evaluation.perQuery) {
+    const group = contentById.get(query.contentId)?.[field] ?? 'unknown';
+    const bucket = groups.get(group) ?? [];
+    bucket.push(query);
+    groups.set(group, bucket);
+  }
+
+  return Object.fromEntries(
+    [...groups.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([group, queries]) => {
+        const positive = queries.filter((query) => query.hasExpectedCandidate);
+        const nullQueries = queries.filter(
+          (query) => !query.hasExpectedCandidate
+        );
+        return [
+          group,
+          {
+            queryCount: queries.length,
+            positiveQueryCount: positive.length,
+            nullQueryCount: nullQueries.length,
+            recallAtK: round(mean(positive.map((query) => query.recallAtK))),
+            ndcgAtK: round(mean(positive.map((query) => query.ndcgAtK))),
+            acceptableWinnerRate: round(
+              mean(positive.map((query) => Number(query.acceptableWinner)))
+            ),
+            positiveNoCandidateRate: round(
+              mean(positive.map((query) => Number(query.noCandidate)))
+            ),
+            falsePositiveOnNullRate: round(
+              mean(nullQueries.map((query) => Number(!query.noCandidate)))
+            ),
+          },
+        ];
+      })
+  );
+}
+
 export function parseJsonLines(value) {
   return value
     .split(/\r?\n/)
@@ -312,36 +355,68 @@ function argument(name, required = false) {
 async function main() {
   const qrelsPath = argument('--qrels', true);
   const controlPath = argument('--control', true);
-  const candidatePath = argument('--candidate', true);
+  const candidatePath = argument('--candidate');
+  const contentsPath = argument('--contents');
   const outputPath = argument('--output');
   const k = Number.parseInt(argument('--k') ?? '10', 10);
   if (!Number.isInteger(k) || k <= 0) {
     throw new Error('--k must be a positive integer');
   }
 
-  const [qrelsText, controlText, candidateText] = await Promise.all([
-    readFile(qrelsPath, 'utf8'),
-    readFile(controlPath, 'utf8'),
-    readFile(candidatePath, 'utf8'),
-  ]);
+  const [qrelsText, controlText, candidateText, contentsText] =
+    await Promise.all([
+      readFile(qrelsPath, 'utf8'),
+      readFile(controlPath, 'utf8'),
+      candidatePath ? readFile(candidatePath, 'utf8') : Promise.resolve(null),
+      contentsPath ? readFile(contentsPath, 'utf8') : Promise.resolve(null),
+    ]);
   const qrels = parseJsonLines(qrelsText);
   const control = evaluateRankings({
     qrels,
     rankings: parseJsonLines(controlText),
     k,
   });
-  const candidate = evaluateRankings({
-    qrels,
-    rankings: parseJsonLines(candidateText),
-    k,
-  });
+  const candidate = candidateText
+    ? evaluateRankings({
+        qrels,
+        rankings: parseJsonLines(candidateText),
+        k,
+      })
+    : null;
+  const contents = contentsText ? parseJsonLines(contentsText) : null;
   const report = {
     control: { valid: control.valid, summary: control.summary },
-    candidate: { valid: candidate.valid, summary: candidate.summary },
-    comparison: compareEvaluations(control, candidate, k),
+    ...(candidate
+      ? {
+          candidate: { valid: candidate.valid, summary: candidate.summary },
+          comparison: compareEvaluations(control, candidate, k),
+        }
+      : {}),
+    ...(contents
+      ? {
+          breakdown: {
+            control: {
+              scenario: summarizeEvaluationBy(contents, control, 'scenario'),
+              split: summarizeEvaluationBy(contents, control, 'split'),
+            },
+            ...(candidate
+              ? {
+                  candidate: {
+                    scenario: summarizeEvaluationBy(
+                      contents,
+                      candidate,
+                      'scenario'
+                    ),
+                    split: summarizeEvaluationBy(contents, candidate, 'split'),
+                  },
+                }
+              : {}),
+          },
+        }
+      : {}),
     validationErrors: {
       control: control.validationErrors,
-      candidate: candidate.validationErrors,
+      ...(candidate ? { candidate: candidate.validationErrors } : {}),
     },
   };
   const serialized = `${JSON.stringify(report, null, 2)}\n`;
@@ -350,7 +425,9 @@ async function main() {
     await writeFile(outputPath, serialized, 'utf8');
   }
   process.stdout.write(serialized);
-  if (!report.comparison.valid) {
+  if (candidate && !report.comparison.valid) {
+    process.exitCode = 2;
+  } else if (!candidate && !control.valid) {
     process.exitCode = 2;
   }
 }

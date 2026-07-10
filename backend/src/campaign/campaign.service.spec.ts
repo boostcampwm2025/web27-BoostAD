@@ -27,7 +27,14 @@ describe('CampaignService initial cache loading', () => {
     tags: [{ id: 1, name: 'typescript' }],
   };
 
-  const buildService = (cached: CachedCampaign | null, job?: object) => {
+  const buildService = (
+    cached: CachedCampaign | null,
+    job?: object,
+    config: {
+      profile?: 'legacy_minilm' | 'multilingual_e5_small';
+      denseMode?: 'legacy_tag' | 'semantic_document';
+    } = {}
+  ) => {
     const campaignRepository = {
       getAll: jest.fn().mockResolvedValue([campaign]),
     };
@@ -46,7 +53,18 @@ describe('CampaignService initial cache loading', () => {
       campaignCacheRepository as never,
       {} as never,
       {} as never,
-      embeddingQueue as never
+      embeddingQueue as never,
+      {
+        get: jest.fn((key: string) => {
+          if (key === 'RTB_EMBEDDING_PROFILE') {
+            return config.profile ?? 'legacy_minilm';
+          }
+          if (key === 'RTB_DENSE_RETRIEVAL_MODE') {
+            return config.denseMode ?? 'legacy_tag';
+          }
+          return undefined;
+        }),
+      } as never
     );
 
     return {
@@ -60,6 +78,8 @@ describe('CampaignService initial cache loading', () => {
     const cached = {
       ...toCachedCampaign(campaign),
       embeddingTags: { typescript: embedding },
+      embeddingModelVersion:
+        'Xenova/all-MiniLM-L6-v2@request-v1-mean-normalized',
     };
     const { service, campaignCacheRepository, embeddingQueue } =
       buildService(cached);
@@ -91,10 +111,47 @@ describe('CampaignService initial cache loading', () => {
     expect(failedJob.remove).toHaveBeenCalledTimes(1);
     expect(embeddingQueue.add).toHaveBeenCalledWith(
       'generate-campaign-embedding',
-      { campaignId: campaign.id },
+      {
+        campaignId: campaign.id,
+        modelVersion: 'Xenova/all-MiniLM-L6-v2@request-v1-mean-normalized',
+      },
       expect.objectContaining({
-        jobId: `campaign-embedding-${campaign.id}`,
+        jobId:
+          'campaign-embedding-xenova-all-minilm-l6-v2-request-v1-mean-normalized-campaign-1',
         attempts: 3,
+      })
+    );
+  });
+
+  it('does not reuse same-dimension embeddings from a different model', async () => {
+    const cached = {
+      ...toCachedCampaign(campaign),
+      embeddingTags: { typescript: embedding },
+      embeddingModelVersion:
+        'Xenova/all-MiniLM-L6-v2@request-v1-mean-normalized',
+    };
+    const { service, campaignCacheRepository, embeddingQueue } = buildService(
+      cached,
+      undefined,
+      { profile: 'multilingual_e5_small', denseMode: 'semantic_document' }
+    );
+
+    await service.loadAllCampaigns();
+
+    expect(campaignCacheRepository.saveCampaignCacheById).toHaveBeenCalledWith(
+      campaign.id,
+      expect.not.objectContaining({ embeddingTags: expect.anything() })
+    );
+    expect(embeddingQueue.add).toHaveBeenCalledWith(
+      'generate-campaign-embedding',
+      {
+        campaignId: campaign.id,
+        modelVersion:
+          'Xenova/multilingual-e5-small@retrieval-v1-mean-normalized',
+      },
+      expect.objectContaining({
+        jobId:
+          'campaign-embedding-xenova-multilingual-e5-small-retrieval-v1-mean-normalized-campaign-1',
       })
     );
   });

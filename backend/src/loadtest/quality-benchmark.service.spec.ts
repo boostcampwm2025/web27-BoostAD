@@ -41,6 +41,7 @@ describe('QualityBenchmarkService', () => {
     saveCampaignCacheById: jest.Mock;
     findCampaignCachesByIds: jest.Mock;
     searchCampaignTagVectors: jest.Mock;
+    searchCampaignDocumentVectors: jest.Mock;
     reserveFirstAvailable: jest.Mock;
   };
   let matcher: { findCandidatesByTags: jest.Mock };
@@ -77,6 +78,15 @@ describe('QualityBenchmarkService', () => {
           }))
         )
       ),
+      searchCampaignDocumentVectors: jest.fn(() =>
+        Promise.resolve(
+          state.map((item) => ({
+            campaignId: item.id,
+            distance: 0,
+            similarity: 1,
+          }))
+        )
+      ),
       reserveFirstAvailable: jest.fn(),
     };
     matcher = {
@@ -106,6 +116,8 @@ describe('QualityBenchmarkService', () => {
     };
     const mlEngine = {
       isReady: jest.fn(() => true),
+      getProfileName: jest.fn(() => 'legacy_minilm'),
+      getModelId: jest.fn(() => 'test/model'),
       getModelVersion: jest.fn(() => 'quality-model-v1'),
       getEmbeddingDimension: jest.fn(() => 2),
       getEmbedding: jest.fn(async () => [1, 0]),
@@ -139,10 +151,32 @@ describe('QualityBenchmarkService', () => {
   }
 
   it('temporarily replaces serving campaigns and restores the previous cache', async () => {
-    const sessionId = await loadQualitySession();
+    const loaded = await service.loadCampaigns(
+      {
+        datasetVersion: 'rtb-phase4-quality-v1',
+        campaigns: [
+          {
+            campaignKey: 'q4-frontend-guide',
+            title: 'Frontend guide',
+            content: 'React performance guide',
+            tags: ['React'],
+          },
+        ],
+      },
+      'secret'
+    );
+    const sessionId = loaded.sessionId;
 
     expect(state.map((item) => item.id)).toEqual(['q4-frontend-guide']);
     expect(state[0].embeddingTags?.react).toEqual([1, 0]);
+    expect(state[0].embeddingDocument).toEqual([1, 0]);
+    expect(state[0].embeddingModelVersion).toBe('quality-model-v1');
+    expect(loaded.runtime).toMatchObject({
+      embeddingProfile: 'legacy_minilm',
+      modelId: 'test/model',
+      modelVersion: 'quality-model-v1',
+      embeddingDimension: 2,
+    });
 
     const restored = await service.restoreCampaigns(sessionId, 'secret');
 

@@ -19,6 +19,7 @@ import type {
   QualityCampaignDto,
   QualityContentDto,
 } from './dto/quality-benchmark.dto';
+import { buildCampaignDocumentText } from 'src/rtb/ml/embedding-text';
 
 type QualitySession = {
   sessionId: string;
@@ -59,6 +60,18 @@ export class QualityBenchmarkService {
     previousCampaignCount: number;
     uniqueEmbeddedTagCount: number;
     indexedTagVectorCount: number;
+    indexedDocumentVectorCount: number;
+    runtime: {
+      embeddingProfile: string;
+      modelId: string;
+      modelVersion: string;
+      embeddingDimension: number;
+      denseRetrievalMode: string;
+      documentSimilarityThreshold: string;
+      annTopL: string;
+      annTopM: string;
+      campaignSource: string;
+    };
   }> {
     this.assertAllowed(providedToken);
     this.assertRuntimeReady();
@@ -77,11 +90,18 @@ export class QualityBenchmarkService {
       });
     try {
       const embeddings = await this.buildTagEmbeddings(dto.campaigns);
-      const qualityCampaigns = dto.campaigns.map((campaign) =>
-        this.toCachedCampaign(campaign, embeddings)
-      );
+      const qualityCampaigns: CachedCampaign[] = [];
+      for (const campaign of dto.campaigns) {
+        const document = await this.mlEngine.getEmbedding(
+          buildCampaignDocumentText(campaign),
+          'passage'
+        );
+        qualityCampaigns.push(
+          this.toCachedCampaign(campaign, embeddings, document)
+        );
+      }
       await this.replaceServingCampaigns(previousCampaigns, qualityCampaigns);
-      const indexedTagVectorCount =
+      const { indexedTagVectorCount, indexedDocumentVectorCount } =
         await this.waitForAnnReady(qualityCampaigns);
 
       const sessionId = randomUUID();
@@ -100,6 +120,8 @@ export class QualityBenchmarkService {
         previousCampaignCount: previousCampaigns.length,
         uniqueEmbeddedTagCount: embeddings.size,
         indexedTagVectorCount,
+        indexedDocumentVectorCount,
+        runtime: this.runtimeMetadata(),
       };
     } catch (error) {
       await this.restoreAfterFailedLoad(previousCampaigns);
@@ -295,6 +317,29 @@ export class QualityBenchmarkService {
     }
   }
 
+  private runtimeMetadata() {
+    return {
+      embeddingProfile: this.mlEngine.getProfileName(),
+      modelId: this.mlEngine.getModelId(),
+      modelVersion: this.mlEngine.getModelVersion(),
+      embeddingDimension: this.mlEngine.getEmbeddingDimension(),
+      denseRetrievalMode: this.configService.get<string>(
+        'RTB_DENSE_RETRIEVAL_MODE',
+        'semantic_document'
+      ),
+      documentSimilarityThreshold: this.configService.get<string>(
+        'RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD',
+        '0.3'
+      ),
+      annTopL: this.configService.get<string>('RTB_MATCHER_ANN_TOP_L', '200'),
+      annTopM: this.configService.get<string>('RTB_MATCHER_ANN_TOP_M', '30'),
+      campaignSource: this.configService.get<string>(
+        'RTB_CAMPAIGN_SOURCE',
+        'redis_json'
+      ),
+    };
+  }
+
   private assertSession(
     sessionId: string,
     datasetVersion?: string
@@ -340,7 +385,7 @@ export class QualityBenchmarkService {
     ].sort();
     const embeddings = new Map<string, number[]>();
     for (const tag of normalizedTags) {
-      const embedding = await this.mlEngine.getEmbedding(tag);
+      const embedding = await this.mlEngine.getEmbedding(tag, 'passage');
       if (
         embedding.length !== this.mlEngine.getEmbeddingDimension() ||
         embedding.some((value) => !Number.isFinite(value))
@@ -356,7 +401,8 @@ export class QualityBenchmarkService {
 
   private toCachedCampaign(
     input: QualityCampaignDto,
-    embeddings: ReadonlyMap<string, number[]>
+    embeddings: ReadonlyMap<string, number[]>,
+    document: number[]
   ): CachedCampaign {
     const tags = [
       ...new Set(
@@ -386,6 +432,8 @@ export class QualityBenchmarkService {
       createdAt: now.toISOString(),
       deletedAt: null,
       tags,
+      embeddingModelVersion: this.mlEngine.getModelVersion(),
+      embeddingDocument: document,
       embeddingTags: Object.fromEntries(
         tags.map((tag) => {
           const embedding = embeddings.get(tag);
@@ -418,7 +466,7 @@ export class QualityBenchmarkService {
     const contentHash = createHash('sha256').update(serialized).digest('hex');
     const contextId = `ctx_${contentHash}`;
     const modelVersion = this.mlEngine.getModelVersion();
-    const embedding = await this.mlEngine.getEmbedding(embeddingText);
+    const embedding = await this.mlEngine.getEmbedding(embeddingText, 'query');
     await this.contextEmbeddingService.completeJob(
       {
         contextId,
@@ -454,13 +502,21 @@ export class QualityBenchmarkService {
     );
   }
 
-  private async waitForAnnReady(campaigns: CachedCampaign[]): Promise<number> {
+  private async waitForAnnReady(campaigns: CachedCampaign[]): Promise<{
+    indexedTagVectorCount: number;
+    indexedDocumentVectorCount: number;
+  }> {
     const expectedTagVectorCount = campaigns.reduce(
       (sum, campaign) => sum + Object.keys(campaign.embeddingTags ?? {}).length,
       0
     );
     const queryEmbedding = Object.values(campaigns[0]?.embeddingTags ?? {})[0];
-    if (!queryEmbedding || expectedTagVectorCount === 0) {
+    const documentQueryEmbedding = campaigns[0]?.embeddingDocument;
+    if (
+      !queryEmbedding ||
+      !documentQueryEmbedding ||
+      expectedTagVectorCount === 0
+    ) {
       throw new ServiceUnavailableException(
         'quality campaign ANN readiness를 확인할 embedding이 없습니다.'
       );
@@ -485,8 +541,24 @@ export class QualityBenchmarkService {
       const indexedQualityHits = hits.filter((hit) =>
         qualityIds.has(hit.campaignId)
       ).length;
-      if (indexedQualityHits >= expectedTagVectorCount) {
-        return indexedQualityHits;
+      const documentHits =
+        await this.campaignCacheRepository.searchCampaignDocumentVectors({
+          queryEmbedding: documentQueryEmbedding,
+          topL: campaigns.length,
+          isHighIntent: false,
+          nowTs: Date.now(),
+        });
+      const indexedQualityDocuments = documentHits.filter((hit) =>
+        qualityIds.has(hit.campaignId)
+      ).length;
+      if (
+        indexedQualityHits >= expectedTagVectorCount &&
+        indexedQualityDocuments >= campaigns.length
+      ) {
+        return {
+          indexedTagVectorCount: indexedQualityHits,
+          indexedDocumentVectorCount: indexedQualityDocuments,
+        };
       }
       await new Promise<void>((resolve) => setTimeout(resolve, intervalMs));
     }
