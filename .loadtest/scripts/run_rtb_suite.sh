@@ -27,10 +27,6 @@ for command in curl jq node k6 git shasum; do
   require_cmd "$command"
 done
 
-if [ "${RESTART_BACKEND_EACH_CELL:-false}" = "true" ]; then
-  require_cmd docker
-fi
-
 mkdir -p "$output_root"
 
 (
@@ -53,8 +49,6 @@ jq -n \
   --arg gitDiffSha "$git_diff_sha" \
   --arg corpusSha "$corpus_sha" \
   --arg corpusSeed "$corpus_seed" \
-  --arg restartEachCell "${RESTART_BACKEND_EACH_CELL:-false}" \
-  --arg backendContainer "${BACKEND_CONTAINER:-boostad-backend-local}" \
   --argjson corpusSize "$corpus_size" \
   '{
     runId: $runId,
@@ -66,33 +60,14 @@ jq -n \
     gitDiffSha: $gitDiffSha,
     corpus: {sha256: $corpusSha, seed: $corpusSeed, size: $corpusSize},
     lifecycle: {
-      restartBackendEachCell: ($restartEachCell == "true"),
-      backendContainer: $backendContainer,
+      restartBackendEachCell: false,
+      isolation: "reset-api",
       warmupOutsideCorpus: true,
       resetAfterWarmup: true
     }
   }' >"${output_root}/manifest.json"
 
 suite_failed=0
-
-restart_backend() {
-  if [ "${RESTART_BACKEND_EACH_CELL:-false}" != "true" ]; then
-    return 0
-  fi
-
-  local container="${BACKEND_CONTAINER:-boostad-backend-local}"
-  docker restart "$container" >/dev/null || return 1
-
-  for _ in $(seq 1 120); do
-    if curl --fail --silent --show-error "${base_url}/api/metrics" >/dev/null 2>&1; then
-      return 0
-    fi
-    sleep 1
-  done
-
-  printf '[suite] backend readiness timeout: %s\n' "$container" >&2
-  return 1
-}
 
 reset_cell_state() {
   local output="$1"
@@ -144,14 +119,6 @@ for cell in $matrix; do
   fi
 
   printf '[suite] start %s\n' "$tag"
-
-  restart_backend >"${cell_dir}/backend_restart.txt" 2>&1
-  restart_rc=$?
-  if [ "$restart_rc" -ne 0 ]; then
-    printf '%s\n' "$restart_rc" >"${cell_dir}/backend_restart_exit_code.txt"
-    suite_failed=1
-    continue
-  fi
 
   reset_cell_state "${cell_dir}/reset_initial_response.json"
   reset_rc=$?

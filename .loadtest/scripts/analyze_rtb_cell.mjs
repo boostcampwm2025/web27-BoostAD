@@ -112,7 +112,11 @@ const result = {
     ),
   },
   labels: {
-    budgetContaminated: reservationRejected > 0,
+    budgetPressureObserved: reservationRejected > 0,
+    budgetState:
+      reservationRejected > 0
+        ? 'PRESSURE_OBSERVED_DURING_CELL'
+        : 'NO_REJECTION_OBSERVED',
     evidence: 'PROVISIONAL',
   },
 };
