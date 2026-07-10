@@ -46,6 +46,15 @@ describe('CampaignServingSnapshotService', () => {
     };
 
   const configService = {
+    get: jest.fn((key: string, defaultValue?: string) => {
+      if (key === 'RTB_CAMPAIGN_SOURCE') return 'local_snapshot';
+      if (key === 'RTB_EMBEDDING_PROFILE') return 'legacy_minilm';
+      if (key === 'RTB_DENSE_RETRIEVAL_MODE') return 'legacy_tag';
+      return defaultValue;
+    }),
+  } as unknown as ConfigService;
+
+  const productDefaultConfigService = {
     get: jest.fn((key: string, defaultValue?: string) =>
       key === 'RTB_CAMPAIGN_SOURCE' ? 'local_snapshot' : defaultValue
     ),
@@ -68,6 +77,25 @@ describe('CampaignServingSnapshotService', () => {
     expect(second.map((item) => item.id)).toEqual(['c1']);
     expect(first[0].embeddingTags?.tag).toBeInstanceOf(Float32Array);
     expect(repository.getAllCampaigns).toHaveBeenCalledTimes(1);
+    expect(repository.findCampaignCachesByIds).not.toHaveBeenCalled();
+  });
+
+  it('requires the E5 document embedding in the default serving mode', async () => {
+    const campaign = {
+      ...buildCampaign('c1'),
+      embeddingModelVersion:
+        'Xenova/multilingual-e5-small@retrieval-v1-mean-normalized',
+      embeddingDocument: embedding,
+    };
+    const repository = buildRepository([campaign]);
+    const service = new CampaignServingSnapshotService(
+      repository,
+      productDefaultConfigService
+    );
+
+    const campaigns = await service.findCampaignsByIds(['c1']);
+
+    expect(campaigns[0].embeddingDocument).toBeInstanceOf(Float32Array);
     expect(repository.findCampaignCachesByIds).not.toHaveBeenCalled();
   });
 

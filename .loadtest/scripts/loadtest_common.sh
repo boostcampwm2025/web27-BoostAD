@@ -29,10 +29,11 @@ redis_cli() {
 embedding_queue_name() {
   if [ -n "${RTB_EMBEDDING_QUEUE_NAME:-}" ]; then
     printf '%s\n' "$RTB_EMBEDDING_QUEUE_NAME"
-  elif [ "${RTB_EMBEDDING_PROFILE:-legacy_minilm}" = "legacy_minilm" ]; then
+  elif [ "${RTB_EMBEDDING_PROFILE:-multilingual_e5_small}" = "legacy_minilm" ]; then
     printf '%s\n' 'embedding-queue'
   else
-    printf 'embedding-queue-%s\n' "$RTB_EMBEDDING_PROFILE"
+    printf 'embedding-queue-%s\n' \
+      "${RTB_EMBEDDING_PROFILE:-multilingual_e5_small}"
   fi
 }
 

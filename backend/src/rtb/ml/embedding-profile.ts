@@ -2,6 +2,9 @@ export type EmbeddingRole = 'query' | 'passage';
 
 export type EmbeddingProfileName = 'legacy_minilm' | 'multilingual_e5_small';
 
+export const DEFAULT_EMBEDDING_PROFILE: EmbeddingProfileName =
+  'multilingual_e5_small';
+
 export type EmbeddingProfile = {
   name: EmbeddingProfileName;
   modelId: string;
@@ -31,7 +34,7 @@ const profiles: Record<EmbeddingProfileName, EmbeddingProfile> = {
 };
 
 export function resolveEmbeddingProfile(rawProfile?: string): EmbeddingProfile {
-  const name = rawProfile?.trim() || 'legacy_minilm';
+  const name = rawProfile?.trim() || DEFAULT_EMBEDDING_PROFILE;
   if (name !== 'legacy_minilm' && name !== 'multilingual_e5_small') {
     throw new Error(`지원하지 않는 RTB_EMBEDDING_PROFILE입니다: ${name}`);
   }

@@ -4,10 +4,20 @@ import {
 } from './embedding-profile';
 
 describe('embedding profile', () => {
-  it('keeps the current MiniLM contract as the default rollback profile', () => {
+  it('uses multilingual E5 as the default serving profile', () => {
     const profile = resolveEmbeddingProfile();
 
-    expect(profile.name).toBe('legacy_minilm');
+    expect(profile.name).toBe('multilingual_e5_small');
+    expect(profile.modelId).toBe('Xenova/multilingual-e5-small');
+    expect(profile.dimension).toBe(384);
+    expect(profile.formatInput('  서버\n  장애  ', 'query')).toBe(
+      'query: 서버 장애'
+    );
+  });
+
+  it('keeps MiniLM available as an explicit rollback profile', () => {
+    const profile = resolveEmbeddingProfile('legacy_minilm');
+
     expect(profile.modelId).toBe('Xenova/all-MiniLM-L6-v2');
     expect(profile.dimension).toBe(384);
     expect(profile.formatInput('  Café   React  ', 'query')).toBe('Café React');

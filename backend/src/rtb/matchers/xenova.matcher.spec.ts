@@ -67,8 +67,20 @@ describe('TransformerMatcher ANN path', () => {
         if (overrides && key in overrides) {
           return overrides[key];
         }
+        if (key === 'RTB_DENSE_RETRIEVAL_MODE') {
+          return 'legacy_tag';
+        }
         return defaultValue;
       }),
+    }) as unknown as ConfigService;
+
+  const buildProductDefaultConfigService = (
+    overrides?: Record<string, string>
+  ) =>
+    ({
+      get: jest.fn((key: string, defaultValue?: string) =>
+        overrides && key in overrides ? overrides[key] : defaultValue
+      ),
     }) as unknown as ConfigService;
 
   const buildMlEngine = () =>
@@ -267,7 +279,7 @@ describe('TransformerMatcher ANN path', () => {
     expect(repository.getAllCampaigns).not.toHaveBeenCalled();
   });
 
-  it('uses campaign document ANN without tag-vector rerank in semantic mode', async () => {
+  it('uses campaign document ANN by default without tag-vector rerank', async () => {
     const campaign1 = {
       ...buildCampaign('c1', ['typescript'], { typescript: [1, 0] }),
       embeddingDocument: [0.4, 0.6],
@@ -288,10 +300,9 @@ describe('TransformerMatcher ANN path', () => {
       buildSnapshot([campaign1, campaign2]),
       buildMlEngine(),
       buildMetricsService(),
-      buildConfigService({
+      buildProductDefaultConfigService({
         RTB_MATCHER_ANN_ENABLED: 'true',
         RTB_CAMPAIGN_SOURCE: 'local_snapshot',
-        RTB_DENSE_RETRIEVAL_MODE: 'semantic_document',
         RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD: '0.3',
         RTB_MATCHER_ANN_TOP_M: '10',
       })

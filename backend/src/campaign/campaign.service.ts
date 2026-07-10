@@ -61,7 +61,10 @@ export class CampaignService {
       configService.get<string>('RTB_EMBEDDING_PROFILE')
     );
     this.requireDocumentEmbedding =
-      configService.get<string>('RTB_DENSE_RETRIEVAL_MODE') ===
+      configService.get<string>(
+        'RTB_DENSE_RETRIEVAL_MODE',
+        'semantic_document'
+      ) ===
       'semantic_document';
   }
 

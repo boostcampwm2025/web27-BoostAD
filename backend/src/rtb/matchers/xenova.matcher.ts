@@ -105,7 +105,7 @@ export class TransformerMatcher extends Matcher {
       ) === 'true';
     const denseRetrievalMode = this.configService.get<string>(
       'RTB_DENSE_RETRIEVAL_MODE',
-      'legacy_tag'
+      'semantic_document'
     );
     if (
       denseRetrievalMode !== 'legacy_tag' &&

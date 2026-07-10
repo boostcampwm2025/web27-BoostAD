@@ -325,7 +325,7 @@ export class QualityBenchmarkService {
       embeddingDimension: this.mlEngine.getEmbeddingDimension(),
       denseRetrievalMode: this.configService.get<string>(
         'RTB_DENSE_RETRIEVAL_MODE',
-        'legacy_tag'
+        'semantic_document'
       ),
       documentSimilarityThreshold: this.configService.get<string>(
         'RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD',

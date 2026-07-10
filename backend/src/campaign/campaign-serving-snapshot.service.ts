@@ -58,7 +58,10 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
       configService.get<string>('RTB_EMBEDDING_PROFILE')
     );
     this.requireDocumentEmbedding =
-      configService.get<string>('RTB_DENSE_RETRIEVAL_MODE') ===
+      configService.get<string>(
+        'RTB_DENSE_RETRIEVAL_MODE',
+        'semantic_document'
+      ) ===
       'semantic_document';
     const campaignSource = configService.get<string>('RTB_CAMPAIGN_SOURCE');
     this.enabled = campaignSource
