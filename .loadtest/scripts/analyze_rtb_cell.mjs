@@ -24,10 +24,32 @@ const reservationRejected = counterDelta(
   { reason: 'rejected' }
 );
 
+// Scenario duration only (exclude k6 setup/teardown from throughput denominator).
+const scenarioDurationSec = (() => {
+  const fromEnv = Number(process.env.ANALYZE_DURATION_SEC ?? '');
+  if (Number.isFinite(fromEnv) && fromEnv > 0) {
+    return fromEnv;
+  }
+  const fromArg = Number(process.argv[6] ?? '');
+  if (Number.isFinite(fromArg) && fromArg > 0) {
+    return fromArg;
+  }
+  return null;
+})();
+const successOnly = trendValues(summary, 'decision_success_duration');
+const completedRps =
+  scenarioDurationSec && scenarioDurationSec > 0
+    ? iterations / scenarioDurationSec
+    : null;
+
 const result = {
   k6: {
     iterations,
     iterationRate: metricValue(summary, 'iterations', 'rate'),
+    // Prefer scenario-duration completed RPS over k6 iteration rate
+    // (k6 rate can include setup/teardown wall time).
+    completedRps,
+    scenarioDurationSec,
     droppedIterations:
       metricValue(summary, 'dropped_iterations', 'count') ?? 0,
     transportErrorRate:
@@ -40,7 +62,12 @@ const result = {
       metricValue(summary, 'business_success', 'value') ??
       null,
     http: trendValues(summary, 'http_req_duration'),
-    successOnly: trendValues(summary, 'decision_success_duration'),
+    successOnly,
+    // Convenience aliases — always sourced from success-only latency.
+    p50Ms: successOnly?.med ?? null,
+    p95Ms: successOnly?.p95 ?? null,
+    p99Ms: successOnly?.p99 ?? null,
+    maxMs: successOnly?.max ?? null,
   },
   server: {
     requests: {
@@ -246,104 +273,104 @@ const result = {
           'dropped'
         ),
       },
-      lexicalFallback: {
-        total: counterDeltaByMetric(
+    },
+    lexicalFallback: {
+      total: counterDeltaByMetric(
+        before,
+        after,
+        'boostad_rtb_lexical_fallback_total'
+      ),
+      candidates: histogramDelta(
+        before,
+        after,
+        'boostad_rtb_lexical_candidate_count'
+      ),
+    },
+    context: {
+      observe: {
+        ready: counterDeltaByLabel(
           before,
           after,
-          'boostad_rtb_lexical_fallback_total'
+          'boostad_rtb_context_observe_total',
+          'status',
+          'READY'
         ),
-        candidates: histogramDelta(
+        pending: counterDeltaByLabel(
           before,
           after,
-          'boostad_rtb_lexical_candidate_count'
+          'boostad_rtb_context_observe_total',
+          'status',
+          'PENDING'
+        ),
+        failed: counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_context_observe_total',
+          'status',
+          'FAILED'
         ),
       },
-      context: {
-        observe: {
-          ready: counterDeltaByLabel(
-            before,
-            after,
-            'boostad_rtb_context_observe_total',
-            'status',
-            'READY'
-          ),
-          pending: counterDeltaByLabel(
-            before,
-            after,
-            'boostad_rtb_context_observe_total',
-            'status',
-            'PENDING'
-          ),
-          failed: counterDeltaByLabel(
-            before,
-            after,
-            'boostad_rtb_context_observe_total',
-            'status',
-            'FAILED'
-          ),
-        },
-        jobs: {
-          enqueued: counterDeltaByLabel(
-            before,
-            after,
-            'boostad_rtb_context_job_total',
-            'result',
-            'enqueued'
-          ),
-          deduplicated: counterDeltaByLabel(
-            before,
-            after,
-            'boostad_rtb_context_job_total',
-            'result',
-            'deduplicated'
-          ),
-          completed: counterDeltaByLabel(
-            before,
-            after,
-            'boostad_rtb_context_job_total',
-            'result',
-            'completed'
-          ),
-          failed: counterDeltaByLabel(
-            before,
-            after,
-            'boostad_rtb_context_job_total',
-            'result',
-            'failed'
-          ),
-        },
-        generation: histogramDelta(
+      jobs: {
+        enqueued: counterDeltaByLabel(
           before,
           after,
-          'boostad_rtb_context_embedding_duration_seconds'
+          'boostad_rtb_context_job_total',
+          'result',
+          'enqueued'
         ),
-        decision: Object.fromEntries(
-          ['READY', 'PENDING', 'FAILED', 'MISS', 'TIMEOUT', 'ERROR'].map(
-            (status) => [
-              status,
-              counterDeltaByLabel(
-                before,
-                after,
-                'boostad_rtb_context_decision_total',
-                'status',
-                status
-              ),
-            ]
-          )
+        deduplicated: counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_context_job_total',
+          'result',
+          'deduplicated'
         ),
-        cache: Object.fromEntries(
-          ['l1_hit', 'l1_miss', 'l2_hit', 'eviction'].map((result) => [
-            result,
+        completed: counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_context_job_total',
+          'result',
+          'completed'
+        ),
+        failed: counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_context_job_total',
+          'result',
+          'failed'
+        ),
+      },
+      generation: histogramDelta(
+        before,
+        after,
+        'boostad_rtb_context_embedding_duration_seconds'
+      ),
+      decision: Object.fromEntries(
+        ['READY', 'PENDING', 'FAILED', 'MISS', 'TIMEOUT', 'ERROR'].map(
+          (status) => [
+            status,
             counterDeltaByLabel(
               before,
               after,
-              'boostad_rtb_context_cache_total',
-              'result',
-              result
+              'boostad_rtb_context_decision_total',
+              'status',
+              status
             ),
-          ])
-        ),
-      },
+          ]
+        )
+      ),
+      cache: Object.fromEntries(
+        ['l1_hit', 'l1_miss', 'l2_hit', 'eviction'].map((result) => [
+          result,
+          counterDeltaByLabel(
+            before,
+            after,
+            'boostad_rtb_context_cache_total',
+            'result',
+            result
+          ),
+        ])
+      ),
     },
     cpuSeconds: counterDeltaByMetric(
       before,
