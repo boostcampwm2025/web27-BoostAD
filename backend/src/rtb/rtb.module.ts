@@ -82,6 +82,7 @@ import { QueueModule } from '../queue/queue.module';
   exports: [
     RTBService,
     MLEngine,
+    Matcher,
     RequestEmbeddingCacheService,
     ContextEmbeddingService,
   ],
