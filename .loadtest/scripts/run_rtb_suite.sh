@@ -109,15 +109,21 @@ reset_cell_state() {
 
 warm_backend() {
   local output="$1"
-  curl --fail --silent --show-error \
-    -X POST "${base_url}/api/sdk/decision" \
-    -H 'Content-Type: application/json' \
-    --data '{"blogKey":"test-blog","postUrl":"http://127.0.0.1/posts/loadtest-warmup","tags":["typescript","react","nestjs"],"behaviorScore":50,"isHighIntent":false}' \
-    >"$output" || return 1
+  for _ in $(seq 1 60); do
+    if curl --fail --silent --show-error \
+      -X POST "${base_url}/api/sdk/decision" \
+      -H 'Content-Type: application/json' \
+      --data '{"blogKey":"test-blog","postUrl":"http://127.0.0.1/posts/loadtest-warmup","tags":["typescript","react","nestjs"],"behaviorScore":50,"isHighIntent":false}' \
+      >"$output" && \
+      jq -e \
+        '.status == "success" and (.data.auctionId | type == "string") and (.data.campaign.id | type == "string")' \
+        "$output" >/dev/null; then
+      return 0
+    fi
+    sleep 1
+  done
 
-  jq -e \
-    '.status == "success" and (.data.auctionId | type == "string") and (.data.campaign.id | type == "string")' \
-    "$output" >/dev/null
+  return 1
 }
 
 for cell in $matrix; do
