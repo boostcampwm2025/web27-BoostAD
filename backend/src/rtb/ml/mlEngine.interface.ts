@@ -29,7 +29,7 @@ export abstract class MLEngine {
   /**
    * 텍스트 or 단어를 벡터로 변환
    * @param text - 변환할 텍스트 (예: "React TypeScript Hooks")
-   * @returns 임베딩 벡터 (384차원)
+   * @returns 현재 profile이 정의한 차원의 임베딩 벡터
    */
   abstract getEmbedding(text: string, role?: EmbeddingRole): Promise<number[]>;
 
