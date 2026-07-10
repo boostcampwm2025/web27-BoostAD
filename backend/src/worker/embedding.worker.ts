@@ -1,18 +1,46 @@
 import { Processor, WorkerHost } from '@nestjs/bullmq';
 import { Job } from 'bullmq';
-import { Logger } from '@nestjs/common';
+import { Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { OnEvent } from '@nestjs/event-emitter';
 import { MLEngine } from 'src/rtb/ml/mlEngine.interface';
 import { CampaignCacheRepository } from 'src/campaign/repository/campaign.cache.repository.interface';
 
-@Processor('embedding-queue')
-export class EmbeddingWorker extends WorkerHost {
+@Processor('embedding-queue', { autorun: false })
+export class EmbeddingWorker
+  extends WorkerHost
+  implements OnApplicationBootstrap
+{
   private readonly logger = new Logger(EmbeddingWorker.name);
+  private startRequested = false;
 
   constructor(
     private readonly mlEngine: MLEngine,
     private readonly campaignCacheRepository: CampaignCacheRepository
   ) {
     super();
+  }
+
+  onApplicationBootstrap(): void {
+    if (this.mlEngine.isReady()) {
+      this.startWorker();
+    }
+  }
+
+  @OnEvent('ml.model.ready')
+  onModelReady(): void {
+    this.startWorker();
+  }
+
+  private startWorker(): void {
+    if (this.startRequested || this.worker.isRunning()) {
+      return;
+    }
+
+    this.startRequested = true;
+    void this.worker.run().catch((error) => {
+      this.startRequested = false;
+      this.logger.error('Embedding worker 실행 실패:', error);
+    });
   }
 
   async process(job: Job): Promise<void> {

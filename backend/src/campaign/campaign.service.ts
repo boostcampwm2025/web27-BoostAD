@@ -68,29 +68,30 @@ export class CampaignService {
       let embeddingQueued = 0;
 
       for (const campaign of campaigns) {
+        const cached = await this.campaignCacheRepository.findCampaignCacheById(
+          campaign.id
+        );
+        const campaignCache = this.mergeReusableEmbeddingTags(
+          this.convertToCachedCampaignType(campaign),
+          cached
+        );
+
         // Redis에 캐싱
         await this.campaignCacheRepository.saveCampaignCacheById(
           campaign.id,
-          this.convertToCachedCampaignType(campaign)
+          campaignCache
         );
 
         loaded++;
 
-        // 임베딩 생성 큐 추가 (campaignId만 전달, Worker가 Redis에서 태그 조회)
-        await this.embeddingQueue.add(
-          'generate-campaign-embedding',
-          {
-            campaignId: campaign.id,
-          },
-          {
-            jobId: `campaign-embedding-${campaign.id}`,
-            removeOnComplete: true,
-            removeOnFail: false,
-            attempts: 3,
+        if (!this.hasAllTagEmbeddings(campaignCache)) {
+          const queued = await this.enqueueInitialCampaignEmbedding(
+            campaign.id
+          );
+          if (queued) {
+            embeddingQueued++;
           }
-        );
-
-        embeddingQueued++;
+        }
 
         // 진행 상황 로깅 (100개당 1번)
         if (loaded % 100 === 0) {
@@ -107,6 +108,66 @@ export class CampaignService {
       this.logger.error('Campaign 로딩 중 에러 발생:', error);
       throw error;
     }
+  }
+
+  private mergeReusableEmbeddingTags(
+    campaign: CachedCampaign,
+    cached: CachedCampaign | null
+  ): CachedCampaign {
+    if (!campaign.tags || !cached?.embeddingTags) {
+      return campaign;
+    }
+
+    const reusableEmbeddingTags = Object.fromEntries(
+      campaign.tags
+        .filter((tagName) => cached.embeddingTags?.[tagName]?.length === 384)
+        .map((tagName) => [tagName, cached.embeddingTags![tagName]])
+    );
+
+    if (Object.keys(reusableEmbeddingTags).length === 0) {
+      return campaign;
+    }
+
+    return {
+      ...campaign,
+      embeddingTags: reusableEmbeddingTags,
+    };
+  }
+
+  private hasAllTagEmbeddings(campaign: CachedCampaign): boolean {
+    return Boolean(
+      campaign.tags?.length &&
+      campaign.tags.every(
+        (tagName) => campaign.embeddingTags?.[tagName]?.length === 384
+      )
+    );
+  }
+
+  private async enqueueInitialCampaignEmbedding(
+    campaignId: string
+  ): Promise<boolean> {
+    const jobId = `campaign-embedding-${campaignId}`;
+    const existingJob = await this.embeddingQueue.getJob(jobId);
+
+    if (existingJob) {
+      const state = await existingJob.getState();
+      if (state !== 'failed') {
+        return false;
+      }
+      await existingJob.remove();
+    }
+
+    await this.embeddingQueue.add(
+      'generate-campaign-embedding',
+      { campaignId },
+      {
+        jobId,
+        removeOnComplete: true,
+        removeOnFail: false,
+        attempts: 3,
+      }
+    );
+    return true;
   }
 
   // 캠페인 생성 (태그 검증 + 날짜 유효성 체크 + 시작일 기준 상태 설정 + 크레딧 차감)
