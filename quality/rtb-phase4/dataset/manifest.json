@@ -1,0 +1,30 @@
+{
+  "datasetVersion": "rtb-phase4-quality-v1",
+  "deterministic": true,
+  "relevantThreshold": 2,
+  "relevanceScale": {
+    "0": "무관하거나 lexical hard negative",
+    "1": "일부 기술·운영 맥락만 관련",
+    "2": "주요 문제를 해결하는 강한 관련",
+    "3": "핵심 주제와 사용자 의도가 직접 일치"
+  },
+  "counts": {
+    "campaigns": 50,
+    "contents": 130,
+    "qrels": 6500,
+    "development": 104,
+    "holdout": 26,
+    "noMatch": 10
+  },
+  "relevanceDistribution": {
+    "0": 4100,
+    "1": 1200,
+    "2": 930,
+    "3": 270
+  },
+  "sha256": {
+    "campaigns": "b23e10932b0d0e2803c9121d0a5fd05f767d9c60a541ffdd19525d75b8fb48c3",
+    "contents": "3a7f756b0bed6848dc21dc80576397a20f2c5460d6685a5da388b7e3fa58685c",
+    "qrels": "2438a7570a759df16320eaaa4cefab3d8586af6072471577a03bda75fe5c4ffe"
+  }
+}
