@@ -19,6 +19,7 @@ import {
 } from '../../common/logging/rtb-path-logger.util';
 
 type MatchableCampaign = CachedCampaign | ServingCampaign;
+type DenseRetrievalMode = 'legacy_tag' | 'semantic_document';
 
 @Injectable()
 export class TransformerMatcher extends Matcher {
@@ -58,6 +59,8 @@ export class TransformerMatcher extends Matcher {
   private readonly coldMissFastPathEnabled: boolean;
   private readonly lexicalTopM: number;
   private readonly contextDecisionEnabled: boolean;
+  private readonly denseRetrievalMode: DenseRetrievalMode;
+  private readonly documentSimilarityThreshold: number;
 
   constructor(
     private readonly campaignCacheRepo: CampaignCacheRepository,
@@ -100,6 +103,23 @@ export class TransformerMatcher extends Matcher {
         'RTB_CONTEXT_DECISION_ENABLED',
         'false'
       ) === 'true';
+    const denseRetrievalMode = this.configService.get<string>(
+      'RTB_DENSE_RETRIEVAL_MODE',
+      'legacy_tag'
+    );
+    if (
+      denseRetrievalMode !== 'legacy_tag' &&
+      denseRetrievalMode !== 'semantic_document'
+    ) {
+      throw new Error(
+        `지원하지 않는 RTB_DENSE_RETRIEVAL_MODE입니다: ${denseRetrievalMode}`
+      );
+    }
+    this.denseRetrievalMode = denseRetrievalMode;
+    this.documentSimilarityThreshold = this.getNonNegativeFloatEnv(
+      'RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD',
+      0.3
+    );
   }
 
   /**
@@ -343,12 +363,25 @@ export class TransformerMatcher extends Matcher {
     return parsed;
   }
 
+  private getNonNegativeFloatEnv(name: string, defaultValue: number): number {
+    const raw = this.configService.get<string>(name);
+    const parsed = raw === undefined ? defaultValue : Number.parseFloat(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return defaultValue;
+    }
+    return parsed;
+  }
+
   private async findCandidatesByAnn(
     context: DecisionContext,
     requestEmbedding: number[],
     requestNorm: string,
     requestTokens: Set<string>
   ): Promise<ScoredCandidate[]> {
+    if (this.denseRetrievalMode === 'semantic_document') {
+      return this.findCandidatesByDocumentAnn(context, requestEmbedding);
+    }
+
     const annSearchStartedAt = process.hrtime.bigint();
     const tagHits = await this.campaignCacheRepo.searchCampaignTagVectors({
       queryEmbedding: requestEmbedding,
@@ -422,6 +455,73 @@ export class TransformerMatcher extends Matcher {
       requestTokens,
       eligibleCampaigns.length
     );
+  }
+
+  private async findCandidatesByDocumentAnn(
+    context: DecisionContext,
+    requestEmbedding: number[]
+  ): Promise<ScoredCandidate[]> {
+    const annSearchStartedAt = process.hrtime.bigint();
+    const documentHits =
+      await this.campaignCacheRepo.searchCampaignDocumentVectors({
+        queryEmbedding: requestEmbedding,
+        topL: this.annTopL,
+        isHighIntent: context.isHighIntent,
+        nowTs: Date.now(),
+      });
+    this.metricsService.recordRtbStage(
+      'match_ann_document_search',
+      'ok',
+      this.elapsedMs(annSearchStartedAt)
+    );
+
+    const retainedHits = documentHits
+      .filter((hit) => hit.similarity >= this.documentSimilarityThreshold)
+      .slice(0, this.annTopM);
+    this.metricsService.observeRtbAnnRetrievedCampaignCount(
+      retainedHits.length
+    );
+    if (retainedHits.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
+      return [];
+    }
+
+    const loadStartedAt = process.hrtime.bigint();
+    const ids = retainedHits.map((hit) => hit.campaignId);
+    const retrievedCampaigns = this.localSnapshotEnabled
+      ? await this.campaignServingSnapshot.findCampaignsByIds(ids)
+      : await this.campaignCacheRepo.findCampaignCachesByIds(ids);
+    this.metricsService.recordRtbStage(
+      this.localSnapshotEnabled
+        ? 'match_campaign_hydrate_snapshot'
+        : 'match_campaign_hydrate_redis',
+      'ok',
+      this.elapsedMs(loadStartedAt)
+    );
+
+    const eligibleById = new Map(
+      this.filterEligibleCampaigns(
+        retrievedCampaigns,
+        context.isHighIntent,
+        false
+      ).map((campaign) => [campaign.id, campaign])
+    );
+    const scoreStartedAt = process.hrtime.bigint();
+    const candidates = retainedHits.flatMap((hit) => {
+      const campaign = eligibleById.get(hit.campaignId);
+      return campaign ? [this.buildCandidate(campaign, hit.similarity)] : [];
+    });
+    this.metricsService.recordRtbStage(
+      'match_document_rerank',
+      'ok',
+      this.elapsedMs(scoreStartedAt)
+    );
+    this.metricsService.observeRtbEligibleCampaignCount(eligibleById.size);
+
+    if (candidates.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
+    }
+    return candidates;
   }
 
   private aggregateAnnTagHits(

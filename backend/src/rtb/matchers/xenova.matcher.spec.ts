@@ -135,14 +135,17 @@ describe('TransformerMatcher ANN path', () => {
       decrementSpent: jest.fn(),
       deleteCampaignEmbeddingById: jest.fn(),
       updateCampaignEmbeddingTags: jest.fn(),
+      updateCampaignEmbeddings: jest.fn(),
       deleteCampaignCacheById: jest.fn(),
       existsCampaignCacheById: jest.fn(),
       getAllCampaigns: jest.fn(),
       resetDailySpentCache: jest.fn(),
       searchCampaignTagVectors: jest.fn(),
+      searchCampaignDocumentVectors: jest.fn(),
     }) as unknown as CampaignCacheRepository & {
       getAllCampaigns: jest.Mock;
       searchCampaignTagVectors: jest.Mock;
+      searchCampaignDocumentVectors: jest.Mock;
       findCampaignCachesByIds: jest.Mock;
     };
 
@@ -264,6 +267,92 @@ describe('TransformerMatcher ANN path', () => {
     expect(repository.getAllCampaigns).not.toHaveBeenCalled();
   });
 
+  it('uses campaign document ANN without tag-vector rerank in semantic mode', async () => {
+    const campaign1 = {
+      ...buildCampaign('c1', ['typescript'], { typescript: [1, 0] }),
+      embeddingDocument: [0.4, 0.6],
+    };
+    const campaign2 = {
+      ...buildCampaign('c2', ['react'], { react: [0.8, 0.2] }),
+      embeddingDocument: [0.9, 0.1],
+    };
+    const repository = buildRepository([campaign1, campaign2]);
+    repository.searchCampaignDocumentVectors.mockResolvedValue([
+      { campaignId: 'c2', distance: 0.1, similarity: 0.9 },
+      { campaignId: 'c1', distance: 0.6, similarity: 0.4 },
+      { campaignId: 'below-threshold', distance: 0.8, similarity: 0.2 },
+    ]);
+
+    const matcher = buildMatcher(
+      repository,
+      buildSnapshot([campaign1, campaign2]),
+      buildMlEngine(),
+      buildMetricsService(),
+      buildConfigService({
+        RTB_MATCHER_ANN_ENABLED: 'true',
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_DENSE_RETRIEVAL_MODE: 'semantic_document',
+        RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD: '0.3',
+        RTB_MATCHER_ANN_TOP_M: '10',
+      })
+    );
+
+    const candidates = await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['typescript'],
+      postUrl: 'https://example.com/post',
+      behaviorScore: 50,
+      isHighIntent: false,
+    });
+
+    expect(repository.searchCampaignDocumentVectors).toHaveBeenCalledTimes(1);
+    expect(repository.searchCampaignTagVectors).not.toHaveBeenCalled();
+    expect(candidates.map((candidate) => candidate.id)).toEqual(['c2', 'c1']);
+    expect(candidates.map((candidate) => candidate.similarity)).toEqual([
+      0.9, 0.4,
+    ]);
+  });
+
+  it('returns no semantic candidates when every document is below threshold', async () => {
+    const campaign = buildCampaign('c1', ['typescript'], {
+      typescript: [1, 0],
+    });
+    const repository = buildRepository([campaign]);
+    repository.searchCampaignDocumentVectors.mockResolvedValue([
+      { campaignId: 'c1', distance: 0.75, similarity: 0.25 },
+    ]);
+    const metrics = buildMetricsService();
+    const matcher = buildMatcher(
+      repository,
+      buildSnapshot([campaign]),
+      buildMlEngine(),
+      metrics,
+      buildConfigService({
+        RTB_MATCHER_ANN_ENABLED: 'true',
+        RTB_DENSE_RETRIEVAL_MODE: 'semantic_document',
+        RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD: '0.3',
+      })
+    );
+
+    await expect(
+      matcher.findCandidatesByTags({
+        blogKey: 'blog',
+        blogId: 1,
+        blogName: 'blog',
+        tags: ['typescript'],
+        postUrl: 'https://example.com/post',
+        behaviorScore: 50,
+        isHighIntent: false,
+      })
+    ).resolves.toEqual([]);
+    expect(repository.findCampaignCachesByIds).not.toHaveBeenCalled();
+    expect(
+      (metrics as unknown as { incRtbFallback: jest.Mock }).incRtbFallback
+    ).toHaveBeenCalledWith('matcher_empty');
+  });
+
   it('reuses request embedding cache for the same tag set regardless of order', async () => {
     const repository = buildRepository([]);
     repository.getAllCampaigns.mockResolvedValue([]);
@@ -340,7 +429,7 @@ describe('TransformerMatcher ANN path', () => {
     });
 
     expect(mlEngine.getEmbedding).toHaveBeenCalledTimes(1);
-    expect(mlEngine.getEmbedding).toHaveBeenCalledWith('café react');
+    expect(mlEngine.getEmbedding).toHaveBeenCalledWith('café react', 'query');
   });
 
   it('3B-M1: cold embedding miss returns ranked lexical candidates immediately', async () => {
@@ -691,7 +780,9 @@ describe('TransformerMatcher ANN path', () => {
     const campaign = buildCampaign('c1', ['react'], {});
     for (const status of ['FAILED', 'TIMEOUT'] as const) {
       const metrics = buildMetricsService();
-      const mlEngine = buildMlEngine() as unknown as { getEmbedding: jest.Mock };
+      const mlEngine = buildMlEngine() as unknown as {
+        getEmbedding: jest.Mock;
+      };
       const matcher = buildMatcher(
         buildRepository([campaign]),
         buildSnapshot([campaign]),
