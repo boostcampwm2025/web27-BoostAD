@@ -123,6 +123,22 @@ describe('CampaignService initial cache loading', () => {
     );
   });
 
+  it('removes a stale completed job and enqueues when embeddings are still missing', async () => {
+    const completedJob = {
+      getState: jest.fn().mockResolvedValue('completed'),
+      remove: jest.fn().mockResolvedValue(undefined),
+    };
+    const { service, embeddingQueue } = buildService(
+      toCachedCampaign(campaign),
+      completedJob
+    );
+
+    await service.loadAllCampaigns();
+
+    expect(completedJob.remove).toHaveBeenCalledTimes(1);
+    expect(embeddingQueue.add).toHaveBeenCalledTimes(1);
+  });
+
   it('does not reuse same-dimension embeddings from a different model', async () => {
     const cached = {
       ...toCachedCampaign(campaign),
