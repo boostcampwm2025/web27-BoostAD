@@ -5,6 +5,16 @@ export abstract class MLEngine {
   abstract isReady(): boolean;
 
   /**
+   * Cache key isolation용 모델 식별자
+   */
+  abstract getModelVersion(): string;
+
+  /**
+   * 캐시 payload 검증에 사용하는 임베딩 차원
+   */
+  abstract getEmbeddingDimension(): number;
+
+  /**
    * 텍스트 or 단어를 벡터로 변환
    * @param text - 변환할 텍스트 (예: "React TypeScript Hooks")
    * @returns 임베딩 벡터 (384차원)

@@ -1,12 +1,12 @@
 services:
-  backend:
+  backend-b:
     build:
       context: .
       dockerfile: backend/Dockerfile.prod
-    container_name: boostad-backend-local
+    container_name: boostad-backend-b-local
     command: node dist/main.js
     ports:
-      - '3000:3000'
+      - '3001:3000'
     environment:
       PORT: '3000'
       NODE_ENV: ${NODE_ENV:-development}
@@ -36,20 +36,19 @@ services:
       RTB_MATCHER_ANN_TOP_L: ${RTB_MATCHER_ANN_TOP_L:-64}
       RTB_MATCHER_ANN_TOP_M: ${RTB_MATCHER_ANN_TOP_M:-20}
       RTB_MATCHER_ANN_PER_CAMPAIGN_HIT_LIMIT: ${RTB_MATCHER_ANN_PER_CAMPAIGN_HIT_LIMIT:-2}
-      RTB_CAMPAIGN_SOURCE: ${RTB_CAMPAIGN_SOURCE:-redis_json}
+      RTB_CAMPAIGN_SOURCE: ${RTB_CAMPAIGN_SOURCE:-local_snapshot}
       RTB_BUDGET_MODE: ${RTB_BUDGET_MODE:-winner_only}
       RTB_EMBEDDING_L2_ENABLED: ${RTB_EMBEDDING_L2_ENABLED:-true}
       RTB_EMBEDDING_L2_LOOKUP_BUDGET_MS: ${RTB_EMBEDDING_L2_LOOKUP_BUDGET_MS:-5}
       RTB_EMBEDDING_L2_WRITE_BUDGET_MS: ${RTB_EMBEDDING_L2_WRITE_BUDGET_MS:-5}
       RTB_EMBEDDING_L2_TTL_SECONDS: ${RTB_EMBEDDING_L2_TTL_SECONDS:-604800}
       RTB_EMBEDDING_L1_MAX_SIZE: ${RTB_EMBEDDING_L1_MAX_SIZE:-1000}
-
     depends_on:
       - mysql
       - redis
     networks:
       - boostad-local
     restart: unless-stopped
-    cpus: ${BACKEND_CPUS:-2.0}
-    mem_limit: ${BACKEND_MEM_LIMIT:-4g}
-    pids_limit: ${BACKEND_PIDS_LIMIT:-256}
+    cpus: ${BACKEND_B_CPUS:-2.0}
+    mem_limit: ${BACKEND_B_MEM_LIMIT:-4g}
+    pids_limit: ${BACKEND_B_PIDS_LIMIT:-256}

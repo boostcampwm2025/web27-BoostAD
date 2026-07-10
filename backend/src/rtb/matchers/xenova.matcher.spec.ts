@@ -1,6 +1,7 @@
 import { ConfigService } from '@nestjs/config';
 import { MetricsService } from '../../metrics/metrics.service';
 import { MLEngine } from '../ml/mlEngine.interface';
+import { RequestEmbeddingCacheService } from '../ml/request-embedding-cache.service';
 import { TransformerMatcher } from './xenova.matcher';
 import { CampaignCacheRepository } from '../../campaign/repository/campaign.cache.repository.interface';
 import type { CachedCampaign } from '../../campaign/types/campaign.types';
@@ -43,6 +44,17 @@ describe('TransformerMatcher ANN path', () => {
       observeRtbEligibleCampaignCount: jest.fn(),
       observeRtbAnnTagHitCount: jest.fn(),
       observeRtbAnnRetrievedCampaignCount: jest.fn(),
+      incRtbEmbeddingL1Hit: jest.fn(),
+      incRtbEmbeddingL1Miss: jest.fn(),
+      incRtbEmbeddingL1Eviction: jest.fn(),
+      incRtbEmbeddingL2Hit: jest.fn(),
+      incRtbEmbeddingL2Miss: jest.fn(),
+      incRtbEmbeddingL2Timeout: jest.fn(),
+      incRtbEmbeddingL2WriteTimeout: jest.fn(),
+      incRtbEmbeddingL2Error: jest.fn(),
+      incRtbEmbeddingSingleflightWait: jest.fn(),
+      incRtbEmbeddingRuntime: jest.fn(),
+      incRtbEmbeddingSource: jest.fn(),
     }) as unknown as MetricsService;
 
   const buildConfigService = (overrides?: Record<string, string>) =>
@@ -58,6 +70,8 @@ describe('TransformerMatcher ANN path', () => {
   const buildMlEngine = () =>
     ({
       isReady: jest.fn(() => true),
+      getModelVersion: jest.fn(() => 'Xenova/all-MiniLM-L6-v2'),
+      getEmbeddingDimension: jest.fn(() => 2),
       getEmbedding: jest.fn().mockResolvedValue([1, 0]),
       calculateSimilarity: jest.fn(
         (vecA: ArrayLike<number>, vecB: ArrayLike<number>) => {
@@ -70,6 +84,32 @@ describe('TransformerMatcher ANN path', () => {
       ),
       computeTextSimilarity: jest.fn(),
     }) as unknown as MLEngine;
+
+  const buildEmbeddingCache = (
+    mlEngine: MLEngine,
+    metrics: MetricsService,
+    config: ConfigService
+  ) =>
+    new RequestEmbeddingCacheService(mlEngine, metrics, config, {
+      get: jest.fn().mockResolvedValue(null),
+      set: jest.fn().mockResolvedValue('OK'),
+    } as never);
+
+  const buildMatcher = (
+    repository: CampaignCacheRepository,
+    snapshot: CampaignServingSnapshotService,
+    mlEngine: MLEngine,
+    metrics: MetricsService,
+    config: ConfigService
+  ) =>
+    new TransformerMatcher(
+      repository,
+      snapshot,
+      mlEngine,
+      buildEmbeddingCache(mlEngine, metrics, config),
+      metrics,
+      config
+    );
 
   const buildRepository = (campaigns: CachedCampaign[]) =>
     ({
@@ -141,7 +181,7 @@ describe('TransformerMatcher ANN path', () => {
       { campaignId: 'c2', tagName: 'react', distance: 0.1, similarity: 0.9 },
     ]);
 
-    const matcher = new TransformerMatcher(
+    const matcher = buildMatcher(
       repository,
       buildSnapshot([campaign1, campaign2]),
       buildMlEngine(),
@@ -180,7 +220,7 @@ describe('TransformerMatcher ANN path', () => {
     repository.searchCampaignTagVectors.mockResolvedValue([]);
     const metrics = buildMetricsService();
 
-    const matcher = new TransformerMatcher(
+    const matcher = buildMatcher(
       repository,
       buildSnapshot([]),
       buildMlEngine(),
@@ -214,13 +254,15 @@ describe('TransformerMatcher ANN path', () => {
     const mlEngine = buildMlEngine() as unknown as {
       getEmbedding: jest.Mock;
     };
+    const metrics = buildMetricsService();
+    const config = buildConfigService();
 
-    const matcher = new TransformerMatcher(
+    const matcher = buildMatcher(
       repository,
       buildSnapshot([]),
       mlEngine as unknown as MLEngine,
-      buildMetricsService(),
-      buildConfigService()
+      metrics,
+      config
     );
 
     await matcher.findCandidatesByTags({
@@ -246,6 +288,45 @@ describe('TransformerMatcher ANN path', () => {
     expect(mlEngine.getEmbedding).toHaveBeenCalledTimes(1);
   });
 
+  it('U13: canonicalizes case, duplicate tags, whitespace, and Unicode form', async () => {
+    const repository = buildRepository([]);
+    repository.getAllCampaigns.mockResolvedValue([]);
+    const mlEngine = buildMlEngine() as unknown as {
+      getEmbedding: jest.Mock;
+    };
+    const metrics = buildMetricsService();
+    const config = buildConfigService();
+    const matcher = buildMatcher(
+      repository,
+      buildSnapshot([]),
+      mlEngine as unknown as MLEngine,
+      metrics,
+      config
+    );
+
+    await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: [' React ', 'REACT', 'Cafe\u0301'],
+      postUrl: 'https://example.com/post',
+      behaviorScore: 20,
+      isHighIntent: false,
+    });
+    await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['café', 'react'],
+      postUrl: 'https://example.com/post',
+      behaviorScore: 20,
+      isHighIntent: false,
+    });
+
+    expect(mlEngine.getEmbedding).toHaveBeenCalledTimes(1);
+    expect(mlEngine.getEmbedding).toHaveBeenCalledWith('café react');
+  });
+
   it('hydrates ANN candidates from the local snapshot when enabled', async () => {
     const campaign = buildCampaign('c1', ['typescript'], {
       typescript: [1, 0],
@@ -262,7 +343,7 @@ describe('TransformerMatcher ANN path', () => {
     const snapshot = buildSnapshot([campaign]);
     const metrics = buildMetricsService();
 
-    const matcher = new TransformerMatcher(
+    const matcher = buildMatcher(
       repository,
       snapshot,
       buildMlEngine(),
@@ -327,8 +408,8 @@ describe('TransformerMatcher ANN path', () => {
       behaviorScore: 20,
       isHighIntent: false,
     };
-    const buildMatcher = (campaignSource: 'redis_json' | 'local_snapshot') =>
-      new TransformerMatcher(
+    const build = (campaignSource: 'redis_json' | 'local_snapshot') =>
+      buildMatcher(
         repository,
         buildSnapshot(campaigns),
         buildMlEngine(),
@@ -340,8 +421,8 @@ describe('TransformerMatcher ANN path', () => {
       );
 
     const [redisCandidates, snapshotCandidates] = await Promise.all([
-      buildMatcher('redis_json').findCandidatesByTags(context),
-      buildMatcher('local_snapshot').findCandidatesByTags(context),
+      build('redis_json').findCandidatesByTags(context),
+      build('local_snapshot').findCandidatesByTags(context),
     ]);
 
     expect(

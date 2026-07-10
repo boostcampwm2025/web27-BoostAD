@@ -13,6 +13,9 @@ export class XenovaMLEngine extends MLEngine implements OnApplicationBootstrap {
   // 사용할 모델과 태스크 정의
   private static readonly TASK = 'feature-extraction';
   private static readonly MODEL = 'Xenova/all-MiniLM-L6-v2';
+  private static readonly MODEL_VERSION =
+    'Xenova/all-MiniLM-L6-v2@request-v1-mean-normalized';
+  private static readonly EMBEDDING_DIMENSION = 384;
 
   constructor(private readonly eventEmitter: EventEmitter2) {
     super();
@@ -40,6 +43,14 @@ export class XenovaMLEngine extends MLEngine implements OnApplicationBootstrap {
   // 모델 로딩 완료 여부를 반환합니다.
   isReady(): boolean {
     return this.modelReady;
+  }
+
+  getModelVersion(): string {
+    return XenovaMLEngine.MODEL_VERSION;
+  }
+
+  getEmbeddingDimension(): number {
+    return XenovaMLEngine.EMBEDDING_DIMENSION;
   }
 
   // 입력된 텍스트의 임베딩 벡터를 생성합니다.

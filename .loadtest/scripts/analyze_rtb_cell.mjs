@@ -116,6 +116,86 @@ const result = {
         'boostad_rtb_rollback_candidate_count'
       ),
     },
+    embedding: {
+      l1Hit: counterDeltaByMetric(
+        before,
+        after,
+        'boostad_rtb_embedding_l1_hit_total'
+      ),
+      l1Miss: counterDeltaByMetric(
+        before,
+        after,
+        'boostad_rtb_embedding_l1_miss_total'
+      ),
+      l1Eviction: counterDeltaByMetric(
+        before,
+        after,
+        'boostad_rtb_embedding_l1_eviction_total'
+      ),
+      l2Hit: counterDeltaByMetric(
+        before,
+        after,
+        'boostad_rtb_embedding_l2_hit_total'
+      ),
+      l2Miss: counterDeltaByMetric(
+        before,
+        after,
+        'boostad_rtb_embedding_l2_miss_total'
+      ),
+      l2Timeout: counterDeltaByMetric(
+        before,
+        after,
+        'boostad_rtb_embedding_l2_timeout_total'
+      ),
+      l2WriteTimeout: counterDeltaByMetric(
+        before,
+        after,
+        'boostad_rtb_embedding_l2_write_timeout_total'
+      ),
+      l2Error: counterDeltaByMetric(
+        before,
+        after,
+        'boostad_rtb_embedding_l2_error_total'
+      ),
+      singleflightWait: counterDeltaByMetric(
+        before,
+        after,
+        'boostad_rtb_embedding_singleflight_wait_total'
+      ),
+      singleflightDuration: histogramDelta(
+        before,
+        after,
+        'boostad_rtb_embedding_singleflight_duration_seconds'
+      ),
+      runtime: counterDeltaByMetric(
+        before,
+        after,
+        'boostad_rtb_embedding_runtime_total'
+      ),
+      source: {
+        'tag-L1': counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_embedding_source_total',
+          'source',
+          'tag-L1'
+        ),
+        'tag-L2': counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_embedding_source_total',
+          'source',
+          'tag-L2'
+        ),
+        runtime: counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_embedding_source_total',
+          'source',
+          'runtime'
+        ),
+      },
+    },
     cpuSeconds: counterDeltaByMetric(
       before,
       after,

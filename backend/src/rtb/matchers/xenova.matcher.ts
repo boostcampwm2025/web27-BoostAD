@@ -7,6 +7,7 @@ import {
   type ServingCampaign,
 } from '../../campaign/campaign-serving-snapshot.service';
 import { MLEngine } from '../ml/mlEngine.interface';
+import { RequestEmbeddingCacheService } from '../ml/request-embedding-cache.service';
 import type { DecisionContext, ScoredCandidate } from '../types/decision.types';
 import type { CachedCampaign } from '../../campaign/types/campaign.types';
 import { MetricsService } from '../../metrics/metrics.service';
@@ -47,9 +48,6 @@ export class TransformerMatcher extends Matcher {
     exact: 0.05,
   } as const;
 
-  // 임베딩은 계산 비용이 높아서(모델 호출), 태그 문자열 기준으로 간단 캐싱합니다.
-  private readonly embeddingCache = new Map<string, number[]>();
-  private readonly EMBEDDING_CACHE_MAX_SIZE = 1_000;
   private readonly annEnabled: boolean;
   private readonly annTopL: number;
   private readonly annTopM: number;
@@ -60,6 +58,7 @@ export class TransformerMatcher extends Matcher {
     private readonly campaignCacheRepo: CampaignCacheRepository,
     private readonly campaignServingSnapshot: CampaignServingSnapshotService,
     private readonly mlEngine: MLEngine,
+    private readonly requestEmbeddingCache: RequestEmbeddingCacheService,
     private readonly metricsService: MetricsService,
     private readonly configService: ConfigService
   ) {
@@ -390,10 +389,8 @@ export class TransformerMatcher extends Matcher {
   // 요청 태그 배열을 임베딩을 위한 단일 텍스트로 변환합니다.
   private buildRequestText(tags: string[]): string {
     const canonicalTags = [
-      ...new Set(tags.map((tag) => tag.trim()).filter(Boolean)),
-    ].sort((a, b) =>
-      this.normalizeText(a).localeCompare(this.normalizeText(b))
-    );
+      ...new Set(tags.map((tag) => this.normalizeText(tag)).filter(Boolean)),
+    ].sort();
 
     return canonicalTags.join(' ');
   }
@@ -442,7 +439,7 @@ export class TransformerMatcher extends Matcher {
   }
 
   private normalizeText(text: string): string {
-    return text.toLowerCase().replace(/\s+/g, ' ').trim();
+    return text.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
   }
 
   // 텍스트를 비교용 토큰으로 분해합니다 (camelCase/구분자 분리 + sql 접미어 분해).
@@ -485,25 +482,7 @@ export class TransformerMatcher extends Matcher {
   }
 
   private async getEmbeddingCached(text: string): Promise<number[]> {
-    const key = this.normalizeText(text);
-    const cached = this.embeddingCache.get(key);
-    if (cached) {
-      // LRU: recency 갱신
-      this.embeddingCache.delete(key);
-      this.embeddingCache.set(key, cached);
-      return cached;
-    }
-
-    const embedding = await this.mlEngine.getEmbedding(text);
-    this.embeddingCache.set(key, embedding);
-
-    // LRU eviction (최대 크기 초과 시 가장 오래된 항목 제거)
-    if (this.embeddingCache.size > this.EMBEDDING_CACHE_MAX_SIZE) {
-      const oldestKey = this.embeddingCache.keys().next().value as  // 자스 Map은 삽입 순서 유지하므로 next로 가장 먼저 들어간 값 뺄 수 있음 LRU
-        | string
-        | undefined;
-      if (oldestKey) this.embeddingCache.delete(oldestKey);
-    }
+    const { embedding } = await this.requestEmbeddingCache.resolve(text);
     return embedding;
   }
 

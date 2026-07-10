@@ -8,6 +8,8 @@ import { CampaignModule } from '../campaign/campaign.module';
 // MLEngine
 import { MLEngine } from './ml/mlEngine.interface';
 import { XenovaMLEngine } from './ml/xenova-mlEngine';
+import { RequestEmbeddingCacheService } from './ml/request-embedding-cache.service';
+import { RedisModule } from '../redis/redis.module';
 
 // Matcher
 import { Matcher } from './matchers/matcher.interface';
@@ -44,10 +46,12 @@ import { QueueModule } from '../queue/queue.module';
     BlogModule,
     MetricsModule,
     QueueModule,
+    RedisModule,
   ],
   controllers: [RTBController],
   providers: [
     RTBService,
+    RequestEmbeddingCacheService,
 
     // Matcher
     {
@@ -73,6 +77,6 @@ import { QueueModule } from '../queue/queue.module';
       useClass: XenovaMLEngine,
     },
   ],
-  exports: [RTBService, MLEngine],
+  exports: [RTBService, MLEngine, RequestEmbeddingCacheService],
 })
 export class RTBModule {}

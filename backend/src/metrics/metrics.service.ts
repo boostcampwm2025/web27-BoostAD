@@ -19,6 +19,7 @@ type DependencyLabel = 'dependency' | 'operation' | 'outcome';
 type BidLogPubSubMessageLabel = 'result';
 type BidLogPubSubEventLabel = 'result';
 type QueueJobLabel = 'queue' | 'state';
+type EmbeddingSourceLabel = 'source';
 
 @Injectable()
 export class MetricsService {
@@ -137,6 +138,80 @@ export class MetricsService {
     name: 'boostad_rtb_fallback_total',
     help: 'RTB fallback 발생 수',
     labelNames: ['reason'],
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL1HitTotal = new Counter({
+    name: 'boostad_rtb_embedding_l1_hit_total',
+    help: 'Request embedding L1 cache hit count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL1MissTotal = new Counter({
+    name: 'boostad_rtb_embedding_l1_miss_total',
+    help: 'Request embedding L1 cache miss count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL1EvictionTotal = new Counter({
+    name: 'boostad_rtb_embedding_l1_eviction_total',
+    help: 'Request embedding L1 cache eviction count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL2HitTotal = new Counter({
+    name: 'boostad_rtb_embedding_l2_hit_total',
+    help: 'Request embedding L2 Redis hit count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL2MissTotal = new Counter({
+    name: 'boostad_rtb_embedding_l2_miss_total',
+    help: 'Request embedding L2 Redis miss count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL2TimeoutTotal = new Counter({
+    name: 'boostad_rtb_embedding_l2_timeout_total',
+    help: 'Request embedding L2 Redis lookup timeout count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL2WriteTimeoutTotal = new Counter({
+    name: 'boostad_rtb_embedding_l2_write_timeout_total',
+    help: 'Request embedding L2 Redis write timeout count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL2ErrorTotal = new Counter({
+    name: 'boostad_rtb_embedding_l2_error_total',
+    help: 'Request embedding L2 Redis error count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingSingleflightWaitTotal = new Counter({
+    name: 'boostad_rtb_embedding_singleflight_wait_total',
+    help: 'Request embedding single-flight waiter count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingSingleflightDurationSeconds = new Histogram({
+    name: 'boostad_rtb_embedding_singleflight_duration_seconds',
+    help: 'Request embedding single-flight waiter duration',
+    buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingRuntimeTotal = new Counter({
+    name: 'boostad_rtb_embedding_runtime_total',
+    help: 'Request embedding runtime Xenova inference count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingSourceTotal = new Counter<EmbeddingSourceLabel>({
+    name: 'boostad_rtb_embedding_source_total',
+    help: 'Request embedding resolution source',
+    labelNames: ['source'],
     registers: [this.registry],
   });
 
@@ -290,6 +365,56 @@ export class MetricsService {
 
   incRtbFallback(reason: string) {
     this.rtbFallbackTotal.inc({ reason });
+  }
+
+  incRtbEmbeddingL1Hit(count = 1) {
+    if (count > 0) this.rtbEmbeddingL1HitTotal.inc(count);
+  }
+
+  incRtbEmbeddingL1Miss(count = 1) {
+    if (count > 0) this.rtbEmbeddingL1MissTotal.inc(count);
+  }
+
+  incRtbEmbeddingL1Eviction(count = 1) {
+    if (count > 0) this.rtbEmbeddingL1EvictionTotal.inc(count);
+  }
+
+  incRtbEmbeddingL2Hit(count = 1) {
+    if (count > 0) this.rtbEmbeddingL2HitTotal.inc(count);
+  }
+
+  incRtbEmbeddingL2Miss(count = 1) {
+    if (count > 0) this.rtbEmbeddingL2MissTotal.inc(count);
+  }
+
+  incRtbEmbeddingL2Timeout(count = 1) {
+    if (count > 0) this.rtbEmbeddingL2TimeoutTotal.inc(count);
+  }
+
+  incRtbEmbeddingL2WriteTimeout(count = 1) {
+    if (count > 0) this.rtbEmbeddingL2WriteTimeoutTotal.inc(count);
+  }
+
+  incRtbEmbeddingL2Error(count = 1) {
+    if (count > 0) this.rtbEmbeddingL2ErrorTotal.inc(count);
+  }
+
+  incRtbEmbeddingSingleflightWait(count = 1) {
+    if (count > 0) this.rtbEmbeddingSingleflightWaitTotal.inc(count);
+  }
+
+  observeRtbEmbeddingSingleflightDuration(seconds: number) {
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      this.rtbEmbeddingSingleflightDurationSeconds.observe(seconds);
+    }
+  }
+
+  incRtbEmbeddingRuntime(count = 1) {
+    if (count > 0) this.rtbEmbeddingRuntimeTotal.inc(count);
+  }
+
+  incRtbEmbeddingSource(source: 'tag-L1' | 'tag-L2' | 'runtime') {
+    this.rtbEmbeddingSourceTotal.inc({ source });
   }
 
   incRtbReservationFailure(reason: string, count = 1) {
