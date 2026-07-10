@@ -120,21 +120,6 @@ export class RTBService {
         )
       );
 
-      // 7. BidLog 저장 (모든 참여 캠페인의 입찰 기록)
-      // TODO(추후 고려 사항): 속성값 고민 및 reason 필드에 대한 고민 그리고 로그 데이터는 RedisStream으로 큐를 통한 배치처리가 고려되면 좋을 거 같음
-      // const bidLogs: BidLog[] = result.candidates.map((candidate) => ({
-      //   auctionId,
-      //   campaignId: candidate.id,
-      //   blogId: blogId,
-      //   status:
-      //     candidate.id === result.winner.id ? BidStatus.WIN : BidStatus.LOSS,
-      //   bidPrice: candidate.maxCpc,
-      //   isHighIntent: context.isHighIntent,
-      //   behaviorScore: context.behaviorScore,
-      //   postUrl: context.postUrl,
-      //   reason: '', // 추후에 수정 필요
-      // }));
-
       const bidLogJob: BidLogJobData = {
         auctionId,
         blogId: blogId,
@@ -505,35 +490,6 @@ export class RTBService {
   ): ScoredCandidate[] {
     return [...candidates].sort((a, b) => b.score - a.score);
   }
-  // cache 문제로 인한 무의미한 주석
-  // 경매 참여 가능한 캠페인만 필터링
-  // private filterEligibleCampaigns(candidates: Candidate[]): Candidate[] {
-  //   const now = new Date();
-
-  //   return candidates.filter((candidate) => {
-  //     const campaign = candidate.campaign;
-
-  //     // 삭제된 캠페인 제외
-  //     if (campaign.deletedAt) {
-  //       return false;
-  //     }
-
-  //     // ACTIVE 상태만 허용
-  //     if (campaign.status !== 'ACTIVE') {
-  //       return false;
-  //     }
-
-  //     // 날짜 범위 검증
-  //     const startDate = new Date(campaign.startDate);
-  //     const endDate = new Date(campaign.endDate);
-
-  //     if (now < startDate || now >= endDate) {
-  //       return false;
-  //     }
-
-  //     return true;
-  //   });
-  // }
 
   private resolveBudgetMode(configuredMode: string | undefined): BudgetMode {
     if (configuredMode === 'winner_only') {
