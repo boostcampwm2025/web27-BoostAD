@@ -2,6 +2,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
 
 const scriptDirectory = dirname(fileURLToPath(import.meta.url));
 const repositoryRoot = resolve(scriptDirectory, '../..');
@@ -54,6 +56,41 @@ function timestampId() {
     .slice(0, 14);
 }
 
+function command(commandName, args) {
+  try {
+    return execFileSync(commandName, args, {
+      cwd: repositoryRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'ignore'],
+    }).trim();
+  } catch {
+    return null;
+  }
+}
+
+function sha256(value) {
+  return createHash('sha256')
+    .update(value ?? '')
+    .digest('hex');
+}
+
+function captureReproducibility(backendContainer) {
+  const gitSha = command('git', ['rev-parse', 'HEAD']);
+  const gitStatus = command('git', ['status', '--porcelain=v1']) ?? '';
+  const gitDiff = command('git', ['diff', '--binary', 'HEAD']) ?? '';
+  const backendImageId = backendContainer
+    ? command('docker', ['inspect', '--format', '{{.Image}}', backendContainer])
+    : null;
+  return {
+    gitSha,
+    gitDiffSha256: sha256(gitDiff),
+    gitDirty: gitStatus.length > 0,
+    gitStatus,
+    backendContainer: backendContainer ?? null,
+    backendImageId,
+  };
+}
+
 async function postJson(baseUrl, token, path, body) {
   const response = await fetch(`${baseUrl}${path}`, {
     method: 'POST',
@@ -82,6 +119,11 @@ async function main() {
   const baseUrl = argument('--base-url', 'http://127.0.0.1:3000');
   const token = argument('--token', process.env.LOADTEST_RESET_TOKEN);
   const retrievalMode = argument('--mode', 'dense_only');
+  const variant = argument('--variant');
+  const backendContainer = argument(
+    '--backend-container',
+    'boostad-backend-local'
+  );
   const topK = Number.parseInt(argument('--top-k', '10'), 10);
   const batchSize = Number.parseInt(argument('--batch-size', '10'), 10);
   const datasetDirectory = resolve(
@@ -94,7 +136,7 @@ async function main() {
         repositoryRoot,
         '.loadtest',
         'results',
-        `${timestampId()}-phase4-quality-${retrievalMode}`
+        `${timestampId()}-phase4-quality-${variant}`
       )
     )
   );
@@ -104,6 +146,9 @@ async function main() {
   }
   if (retrievalMode !== 'dense_only') {
     throw new Error('현재 ranking extractor는 dense_only만 지원합니다.');
+  }
+  if (!variant || !/^[a-z0-9][a-z0-9_-]*$/i.test(variant)) {
+    throw new Error('--variant must be a filesystem-safe identifier');
   }
   if (!Number.isInteger(topK) || topK <= 0 || topK > 50) {
     throw new Error('--top-k must be between 1 and 50');
@@ -134,6 +179,8 @@ async function main() {
       {
         sessionId: loadResult.sessionId,
         datasetVersion: datasetManifest.datasetVersion,
+        variant,
+        runtime: loadResult.runtime,
         restored: false,
         recoveryEndpoint: '/api/internal/loadtest/quality/restore-campaigns',
       },
@@ -203,6 +250,8 @@ async function main() {
             datasetVersion: datasetManifest.datasetVersion,
             restored: true,
             restoredAt: new Date().toISOString(),
+            variant,
+            runtime: loadResult.runtime,
           },
           null,
           2
@@ -217,6 +266,8 @@ async function main() {
             sessionId: loadResult.sessionId,
             datasetVersion: datasetManifest.datasetVersion,
             restored: false,
+            variant,
+            runtime: loadResult.runtime,
             restoreError:
               restoreError instanceof Error
                 ? restoreError.message
@@ -245,6 +296,7 @@ async function main() {
     generatedAt: new Date().toISOString(),
     baseUrl,
     retrievalMode,
+    variant,
     topK,
     batchSize,
     datasetVersion: datasetManifest.datasetVersion,
@@ -253,6 +305,8 @@ async function main() {
     contentCount: contents.length,
     reserveCalled: false,
     budgetMutationCount: 0,
+    reproducibility: captureReproducibility(backendContainer),
+    runtime: loadResult.runtime,
     load: loadResult,
     restore: restoreResult,
   };

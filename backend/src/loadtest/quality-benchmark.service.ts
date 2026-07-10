@@ -61,6 +61,17 @@ export class QualityBenchmarkService {
     uniqueEmbeddedTagCount: number;
     indexedTagVectorCount: number;
     indexedDocumentVectorCount: number;
+    runtime: {
+      embeddingProfile: string;
+      modelId: string;
+      modelVersion: string;
+      embeddingDimension: number;
+      denseRetrievalMode: string;
+      documentSimilarityThreshold: string;
+      annTopL: string;
+      annTopM: string;
+      campaignSource: string;
+    };
   }> {
     this.assertAllowed(providedToken);
     this.assertRuntimeReady();
@@ -110,6 +121,7 @@ export class QualityBenchmarkService {
         uniqueEmbeddedTagCount: embeddings.size,
         indexedTagVectorCount,
         indexedDocumentVectorCount,
+        runtime: this.runtimeMetadata(),
       };
     } catch (error) {
       await this.restoreAfterFailedLoad(previousCampaigns);
@@ -303,6 +315,29 @@ export class QualityBenchmarkService {
         '다른 quality benchmark 작업이 진행 중입니다.'
       );
     }
+  }
+
+  private runtimeMetadata() {
+    return {
+      embeddingProfile: this.mlEngine.getProfileName(),
+      modelId: this.mlEngine.getModelId(),
+      modelVersion: this.mlEngine.getModelVersion(),
+      embeddingDimension: this.mlEngine.getEmbeddingDimension(),
+      denseRetrievalMode: this.configService.get<string>(
+        'RTB_DENSE_RETRIEVAL_MODE',
+        'legacy_tag'
+      ),
+      documentSimilarityThreshold: this.configService.get<string>(
+        'RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD',
+        '0.3'
+      ),
+      annTopL: this.configService.get<string>('RTB_MATCHER_ANN_TOP_L', '200'),
+      annTopM: this.configService.get<string>('RTB_MATCHER_ANN_TOP_M', '30'),
+      campaignSource: this.configService.get<string>(
+        'RTB_CAMPAIGN_SOURCE',
+        'redis_json'
+      ),
+    };
   }
 
   private assertSession(

@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildDataset } from './dataset.mjs';
-import { compareEvaluations, evaluateRankings } from './evaluate-rankings.mjs';
+import {
+  compareEvaluations,
+  evaluateRankings,
+  summarizeEvaluationBy,
+} from './evaluate-rankings.mjs';
 import {
   chunk,
   toCampaignPayload,
@@ -195,4 +199,26 @@ test('ranking runner strips dataset-only fields from strict API payloads', () =>
 test('ranking runner creates complete deterministic batches', () => {
   assert.deepEqual(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
   assert.throws(() => chunk([1], 0), /positive integer/);
+});
+
+test('quality evaluation reports scenario-level semantic failures', () => {
+  const dataset = buildDataset();
+  const rankings = dataset.contents.map((content) => ({
+    contentId: content.contentId,
+    candidates: [],
+  }));
+  const evaluation = evaluateRankings({
+    qrels: dataset.qrels,
+    rankings,
+    k: 10,
+  });
+  const scenarios = summarizeEvaluationBy(
+    dataset.contents,
+    evaluation,
+    'scenario'
+  );
+
+  assert.equal(scenarios['semantic-paraphrase'].queryCount, 10);
+  assert.equal(scenarios['semantic-paraphrase'].positiveNoCandidateRate, 1);
+  assert.equal(scenarios['no-match'].falsePositiveOnNullRate, 0);
 });
