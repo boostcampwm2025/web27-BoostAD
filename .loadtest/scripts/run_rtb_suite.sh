@@ -68,6 +68,17 @@ jq -n \
   }' >"${output_root}/manifest.json"
 
 suite_failed=0
+sampler_pid=""
+
+cleanup_sampler() {
+  if [ -n "$sampler_pid" ]; then
+    kill "$sampler_pid" >/dev/null 2>&1 || true
+    wait "$sampler_pid" >/dev/null 2>&1 || true
+    sampler_pid=""
+  fi
+}
+
+trap cleanup_sampler EXIT INT TERM
 
 reset_cell_state() {
   local output="$1"
@@ -99,6 +110,70 @@ warm_backend() {
   done
 
   return 1
+}
+
+reservation_rejected_total() {
+  local metrics_file="$1"
+  awk '
+    $1 ~ /^boostad_rtb_reservation_failures_total\{/ && $1 ~ /reason="rejected"/ {
+      sum += $2
+    }
+    END { printf "%.0f\n", sum + 0 }
+  ' "$metrics_file"
+}
+
+sample_budget_pressure() {
+  local metrics_url="$1/api/metrics"
+  local baseline_file="$2"
+  local timeseries_file="$3"
+  local onset_file="$4"
+  local baseline
+  local current
+  local elapsed_ms
+  local started_ms
+  local tmp
+
+  trap 'if [ -n "${tmp:-}" ]; then rm -f "$tmp"; fi' EXIT INT TERM
+
+  baseline="$(reservation_rejected_total "$baseline_file")"
+  started_ms="$(node -e 'process.stdout.write(String(Date.now()))')"
+  : >"$timeseries_file"
+  jq -n \
+    --argjson baseline "$baseline" \
+    '{observed:false,baselineRejected:$baseline,onsetElapsedMs:null,onsetAbsoluteMs:null,firstRejectedTotal:null}' \
+    >"$onset_file"
+
+  while true; do
+    tmp="$(mktemp)"
+    if curl --fail --silent --show-error "$metrics_url" >"$tmp"; then
+      current="$(reservation_rejected_total "$tmp")"
+      elapsed_ms="$(node -e "process.stdout.write(String(Date.now() - ${started_ms}))")"
+      jq -nc \
+        --argjson t "$elapsed_ms" \
+        --argjson rejected "$current" \
+        --argjson delta "$((current - baseline))" \
+        '{elapsedMs:$t,reservationRejectedTotal:$rejected,deltaFromBaseline:$delta}' \
+        >>"$timeseries_file"
+
+      if [ "$((current - baseline))" -gt 0 ] && \
+        jq -e '.observed == false' "$onset_file" >/dev/null; then
+        jq -n \
+          --argjson baseline "$baseline" \
+          --argjson rejected "$current" \
+          --argjson elapsed "$elapsed_ms" \
+          --argjson absolute "$(node -e 'process.stdout.write(String(Date.now()))')" \
+          '{
+            observed:true,
+            baselineRejected:$baseline,
+            firstRejectedTotal:$rejected,
+            onsetElapsedMs:$elapsed,
+            onsetAbsoluteMs:$absolute
+          }' >"$onset_file"
+      fi
+    fi
+    rm -f "$tmp"
+    sleep 1
+  done
 }
 
 for cell in $matrix; do
@@ -147,6 +222,13 @@ for cell in $matrix; do
   curl --fail --silent --show-error "${base_url}/api/metrics" \
     >"${cell_dir}/metrics_before.txt"
 
+  sample_budget_pressure \
+    "${base_url}" \
+    "${cell_dir}/metrics_before.txt" \
+    "${cell_dir}/metrics_timeseries.ndjson" \
+    "${cell_dir}/budget_pressure_onset.json" &
+  sampler_pid=$!
+
   (
     cd "$loadtest_dir"
     BASE_URL="$base_url" \
@@ -167,6 +249,10 @@ for cell in $matrix; do
         "$k6_script"
   ) 2>&1 | tee "${cell_dir}/k6_stdout.txt"
   k6_rc=${PIPESTATUS[0]}
+
+  kill "$sampler_pid" >/dev/null 2>&1 || true
+  wait "$sampler_pid" >/dev/null 2>&1 || true
+  sampler_pid=""
 
   printf '%s\n' "$k6_rc" >"${cell_dir}/k6_exit_code.txt"
   curl --fail --silent --show-error "${base_url}/api/metrics" \

@@ -1,0 +1,20 @@
+{
+  "runId": "20260710-before-baseline-160102",
+  "variant": "before",
+  "evidence": "PROVISIONAL",
+  "duration": "60s",
+  "matrix": "fixed:30 fixed:60 random:30 random:60",
+  "gitSha": "913ff058446ed2430ddb58bf210ae3f4a99f8550",
+  "gitDiffSha": "715731d1b34120eaa2843799e4a38531d5eb03963a1791043df4e9806b27cdb4",
+  "corpus": {
+    "sha256": "d78fae7a58031481a3636789fac9323b6985113e2c674f6fb7e927522488b75a",
+    "seed": "20260710",
+    "size": 3600
+  },
+  "lifecycle": {
+    "restartBackendEachCell": false,
+    "isolation": "reset-api",
+    "warmupOutsideCorpus": true,
+    "resetAfterWarmup": true
+  }
+}

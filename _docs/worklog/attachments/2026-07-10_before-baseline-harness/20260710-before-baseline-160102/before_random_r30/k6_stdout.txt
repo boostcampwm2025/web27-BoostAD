@@ -1,0 +1,252 @@
+
+         /\      Grafana   /‾‾/  
+    /\  /  \     |\  __   /  /   
+   /  \/    \    | |/ /  /   ‾‾\ 
+  /          \   |   (  |  (‾)  |
+ / __________ \  |_|\_\  \_____/ 
+
+     execution: local
+        script: k6/http/rtb-decision-random-pool.js
+        output: -
+
+     scenarios: (100.00%) 1 scenario, 240 max VUs, 1m30s max duration (incl. graceful stop):
+              * rtb_decision: 30.00 iterations/s for 1m0s (maxVUs: 50-240, gracefulStop: 30s)
+
+
+running (0m01.0s), 001/050 VUs, 29 complete and 0 interrupted iterations
+rtb_decision   [   2% ] 001/050 VUs  0m01.0s/1m0s  30.00 iters/s
+
+running (0m02.0s), 000/050 VUs, 60 complete and 0 interrupted iterations
+rtb_decision   [   3% ] 000/050 VUs  0m02.0s/1m0s  30.00 iters/s
+
+running (0m03.0s), 015/050 VUs, 75 complete and 0 interrupted iterations
+rtb_decision   [   5% ] 015/050 VUs  0m03.0s/1m0s  30.00 iters/s
+
+running (0m04.0s), 001/050 VUs, 119 complete and 0 interrupted iterations
+rtb_decision   [   7% ] 001/050 VUs  0m04.0s/1m0s  30.00 iters/s
+
+running (0m05.0s), 000/050 VUs, 150 complete and 0 interrupted iterations
+rtb_decision   [   8% ] 000/050 VUs  0m05.0s/1m0s  30.00 iters/s
+
+running (0m06.0s), 005/050 VUs, 175 complete and 0 interrupted iterations
+rtb_decision   [  10% ] 005/050 VUs  0m06.0s/1m0s  30.00 iters/s
+
+running (0m07.0s), 016/050 VUs, 194 complete and 0 interrupted iterations
+rtb_decision   [  12% ] 016/050 VUs  0m07.0s/1m0s  30.00 iters/s
+
+running (0m08.0s), 000/050 VUs, 240 complete and 0 interrupted iterations
+rtb_decision   [  13% ] 000/050 VUs  0m08.0s/1m0s  30.00 iters/s
+
+running (0m09.0s), 000/050 VUs, 270 complete and 0 interrupted iterations
+rtb_decision   [  15% ] 000/050 VUs  0m09.0s/1m0s  30.00 iters/s
+
+running (0m10.0s), 005/050 VUs, 295 complete and 0 interrupted iterations
+rtb_decision   [  17% ] 005/050 VUs  0m10.0s/1m0s  30.00 iters/s
+
+running (0m11.0s), 027/050 VUs, 303 complete and 0 interrupted iterations
+rtb_decision   [  18% ] 027/050 VUs  0m11.0s/1m0s  30.00 iters/s
+
+running (0m12.0s), 050/050 VUs, 310 complete and 0 interrupted iterations
+rtb_decision   [  20% ] 050/050 VUs  0m12.0s/1m0s  30.00 iters/s
+
+running (0m13.0s), 031/058 VUs, 351 complete and 0 interrupted iterations
+rtb_decision   [  22% ] 031/058 VUs  0m13.0s/1m0s  30.00 iters/s
+
+running (0m14.0s), 025/058 VUs, 387 complete and 0 interrupted iterations
+rtb_decision   [  23% ] 025/058 VUs  0m14.0s/1m0s  30.00 iters/s
+
+running (0m15.0s), 000/058 VUs, 442 complete and 0 interrupted iterations
+rtb_decision   [  25% ] 000/058 VUs  0m15.0s/1m0s  30.00 iters/s
+
+running (0m16.0s), 000/058 VUs, 472 complete and 0 interrupted iterations
+rtb_decision   [  27% ] 000/058 VUs  0m16.0s/1m0s  30.00 iters/s
+
+running (0m17.0s), 002/058 VUs, 500 complete and 0 interrupted iterations
+rtb_decision   [  28% ] 002/058 VUs  0m17.0s/1m0s  30.00 iters/s
+
+running (0m18.0s), 000/058 VUs, 532 complete and 0 interrupted iterations
+rtb_decision   [  30% ] 000/058 VUs  0m18.0s/1m0s  30.00 iters/s
+
+running (0m19.0s), 000/058 VUs, 562 complete and 0 interrupted iterations
+rtb_decision   [  32% ] 000/058 VUs  0m19.0s/1m0s  30.00 iters/s
+
+running (0m20.0s), 000/058 VUs, 592 complete and 0 interrupted iterations
+rtb_decision   [  33% ] 000/058 VUs  0m20.0s/1m0s  30.00 iters/s
+
+running (0m21.0s), 000/058 VUs, 622 complete and 0 interrupted iterations
+rtb_decision   [  35% ] 000/058 VUs  0m21.0s/1m0s  30.00 iters/s
+
+running (0m22.0s), 000/058 VUs, 652 complete and 0 interrupted iterations
+rtb_decision   [  37% ] 000/058 VUs  0m22.0s/1m0s  30.00 iters/s
+
+running (0m23.0s), 000/058 VUs, 682 complete and 0 interrupted iterations
+rtb_decision   [  38% ] 000/058 VUs  0m23.0s/1m0s  30.00 iters/s
+
+running (0m24.0s), 000/058 VUs, 712 complete and 0 interrupted iterations
+rtb_decision   [  40% ] 000/058 VUs  0m24.0s/1m0s  30.00 iters/s
+
+running (0m25.0s), 005/058 VUs, 737 complete and 0 interrupted iterations
+rtb_decision   [  42% ] 005/058 VUs  0m25.0s/1m0s  30.00 iters/s
+
+running (0m26.0s), 001/058 VUs, 771 complete and 0 interrupted iterations
+rtb_decision   [  43% ] 001/058 VUs  0m26.0s/1m0s  30.00 iters/s
+
+running (0m27.0s), 000/058 VUs, 802 complete and 0 interrupted iterations
+rtb_decision   [  45% ] 000/058 VUs  0m27.0s/1m0s  30.00 iters/s
+
+running (0m28.0s), 003/058 VUs, 829 complete and 0 interrupted iterations
+rtb_decision   [  47% ] 003/058 VUs  0m28.0s/1m0s  30.00 iters/s
+
+running (0m29.0s), 002/058 VUs, 860 complete and 0 interrupted iterations
+rtb_decision   [  48% ] 002/058 VUs  0m29.0s/1m0s  30.00 iters/s
+
+running (0m30.0s), 000/058 VUs, 892 complete and 0 interrupted iterations
+rtb_decision   [  50% ] 000/058 VUs  0m30.0s/1m0s  30.00 iters/s
+
+running (0m31.0s), 000/058 VUs, 922 complete and 0 interrupted iterations
+rtb_decision   [  52% ] 000/058 VUs  0m31.0s/1m0s  30.00 iters/s
+
+running (0m32.0s), 000/058 VUs, 952 complete and 0 interrupted iterations
+rtb_decision   [  53% ] 000/058 VUs  0m32.0s/1m0s  30.00 iters/s
+
+running (0m33.0s), 000/058 VUs, 982 complete and 0 interrupted iterations
+rtb_decision   [  55% ] 000/058 VUs  0m33.0s/1m0s  30.00 iters/s
+
+running (0m34.0s), 000/058 VUs, 1012 complete and 0 interrupted iterations
+rtb_decision   [  57% ] 000/058 VUs  0m34.0s/1m0s  30.00 iters/s
+
+running (0m35.0s), 000/058 VUs, 1042 complete and 0 interrupted iterations
+rtb_decision   [  58% ] 000/058 VUs  0m35.0s/1m0s  30.00 iters/s
+
+running (0m36.0s), 008/058 VUs, 1064 complete and 0 interrupted iterations
+rtb_decision   [  60% ] 008/058 VUs  0m36.0s/1m0s  30.00 iters/s
+
+running (0m37.0s), 000/058 VUs, 1102 complete and 0 interrupted iterations
+rtb_decision   [  62% ] 000/058 VUs  0m37.0s/1m0s  30.00 iters/s
+
+running (0m38.0s), 000/058 VUs, 1132 complete and 0 interrupted iterations
+rtb_decision   [  63% ] 000/058 VUs  0m38.0s/1m0s  30.00 iters/s
+
+running (0m39.0s), 000/058 VUs, 1162 complete and 0 interrupted iterations
+rtb_decision   [  65% ] 000/058 VUs  0m39.0s/1m0s  30.00 iters/s
+
+running (0m40.0s), 000/058 VUs, 1192 complete and 0 interrupted iterations
+rtb_decision   [  67% ] 000/058 VUs  0m40.0s/1m0s  30.00 iters/s
+
+running (0m41.0s), 006/058 VUs, 1216 complete and 0 interrupted iterations
+rtb_decision   [  68% ] 006/058 VUs  0m41.0s/1m0s  30.00 iters/s
+
+running (0m42.0s), 000/058 VUs, 1252 complete and 0 interrupted iterations
+rtb_decision   [  70% ] 000/058 VUs  0m42.0s/1m0s  30.00 iters/s
+
+running (0m43.0s), 000/058 VUs, 1282 complete and 0 interrupted iterations
+rtb_decision   [  72% ] 000/058 VUs  0m43.0s/1m0s  30.00 iters/s
+
+running (0m44.0s), 004/058 VUs, 1308 complete and 0 interrupted iterations
+rtb_decision   [  73% ] 004/058 VUs  0m44.0s/1m0s  30.00 iters/s
+
+running (0m45.0s), 000/058 VUs, 1342 complete and 0 interrupted iterations
+rtb_decision   [  75% ] 000/058 VUs  0m45.0s/1m0s  30.00 iters/s
+
+running (0m46.0s), 000/058 VUs, 1372 complete and 0 interrupted iterations
+rtb_decision   [  77% ] 000/058 VUs  0m46.0s/1m0s  30.00 iters/s
+
+running (0m47.0s), 001/058 VUs, 1401 complete and 0 interrupted iterations
+rtb_decision   [  78% ] 001/058 VUs  0m47.0s/1m0s  30.00 iters/s
+
+running (0m48.0s), 006/058 VUs, 1426 complete and 0 interrupted iterations
+rtb_decision   [  80% ] 006/058 VUs  0m48.0s/1m0s  30.00 iters/s
+
+running (0m49.0s), 001/058 VUs, 1461 complete and 0 interrupted iterations
+rtb_decision   [  82% ] 001/058 VUs  0m49.0s/1m0s  30.00 iters/s
+
+running (0m50.0s), 000/058 VUs, 1492 complete and 0 interrupted iterations
+rtb_decision   [  83% ] 000/058 VUs  0m50.0s/1m0s  30.00 iters/s
+
+running (0m51.0s), 001/058 VUs, 1521 complete and 0 interrupted iterations
+rtb_decision   [  85% ] 001/058 VUs  0m51.0s/1m0s  30.00 iters/s
+
+running (0m52.0s), 000/058 VUs, 1552 complete and 0 interrupted iterations
+rtb_decision   [  87% ] 000/058 VUs  0m52.0s/1m0s  30.00 iters/s
+
+running (0m53.0s), 000/058 VUs, 1582 complete and 0 interrupted iterations
+rtb_decision   [  88% ] 000/058 VUs  0m53.0s/1m0s  30.00 iters/s
+
+running (0m54.0s), 000/058 VUs, 1612 complete and 0 interrupted iterations
+rtb_decision   [  90% ] 000/058 VUs  0m54.0s/1m0s  30.00 iters/s
+
+running (0m55.0s), 000/058 VUs, 1642 complete and 0 interrupted iterations
+rtb_decision   [  92% ] 000/058 VUs  0m55.0s/1m0s  30.00 iters/s
+
+running (0m56.0s), 021/058 VUs, 1651 complete and 0 interrupted iterations
+rtb_decision   [  93% ] 021/058 VUs  0m56.0s/1m0s  30.00 iters/s
+
+running (0m57.0s), 050/058 VUs, 1652 complete and 0 interrupted iterations
+rtb_decision   [  95% ] 050/058 VUs  0m57.0s/1m0s  30.00 iters/s
+
+running (0m58.0s), 066/067 VUs, 1657 complete and 0 interrupted iterations
+rtb_decision   [  97% ] 066/067 VUs  0m58.0s/1m0s  30.00 iters/s
+
+running (0m59.0s), 001/072 VUs, 1747 complete and 0 interrupted iterations
+rtb_decision   [  98% ] 001/072 VUs  0m59.0s/1m0s  30.00 iters/s
+
+running (1m00.0s), 002/072 VUs, 1776 complete and 0 interrupted iterations
+rtb_decision   [ 100% ] 002/072 VUs  1m00.0s/1m0s  30.00 iters/s
+
+
+  █ THRESHOLDS 
+
+    business_errors
+    ✗ 'rate<0.01' rate=7.75%
+
+    errors
+    ✗ 'rate<0.01' rate=7.75%
+
+    http_req_duration
+    ✗ 'p(95)<300' p(95)=1.48s
+
+    http_req_failed
+    ✓ 'rate<0.01' rate=0.00%
+
+
+  █ TOTAL RESULTS 
+
+    checks_total.......: 3558   59.197115/s
+    checks_succeeded...: 96.12% 3420 out of 3558
+    checks_failed......: 3.87%  138 out of 3558
+
+    ✓ decision: status is 2xx
+    ✗ decision: business success
+      ↳  92% — ✓ 1641 / ✗ 138
+
+    CUSTOM
+    business_error_reasons.........: 138    2.29601/s
+    business_errors................: 7.75%  138 out of 1779
+    business_success...............: 92.24% 1641 out of 1779
+    decision_success_duration......: avg=237.18ms min=6.02ms med=13.59ms p(90)=829.76ms p(95)=1.53s p(99)=2.68s max=3.05s
+    errors.........................: 7.75%  138 out of 1779
+    transport_errors...............: 0.00%  0 out of 1779
+
+    HTTP
+    http_req_duration..............: avg=226.82ms min=6.02ms med=13.5ms  p(90)=758.21ms p(95)=1.48s p(99)=2.63s max=3.05s
+      { expected_response:true }...: avg=226.82ms min=6.02ms med=13.5ms  p(90)=758.21ms p(95)=1.48s p(99)=2.63s max=3.05s
+    http_req_failed................: 0.00%  0 out of 1779
+    http_reqs......................: 1779   29.598558/s
+
+    EXECUTION
+    dropped_iterations.............: 22     0.366031/s
+    iteration_duration.............: avg=227.32ms min=6.25ms med=14.02ms p(90)=758.7ms  p(95)=1.48s p(99)=2.64s max=3.05s
+    iterations.....................: 1779   29.598558/s
+    vus............................: 2      min=0            max=66
+    vus_max........................: 72     min=50           max=72
+
+    NETWORK
+    data_received..................: 1.9 MB 32 kB/s
+    data_sent......................: 567 kB 9.4 kB/s
+
+
+
+
+running (1m00.1s), 000/072 VUs, 1779 complete and 0 interrupted iterations
+rtb_decision ✓ [ 100% ] 000/072 VUs  1m0s  30.00 iters/s
+time="2026-07-10T16:04:31+09:00" level=error msg="thresholds on metrics 'business_errors, errors, http_req_duration' have been crossed"

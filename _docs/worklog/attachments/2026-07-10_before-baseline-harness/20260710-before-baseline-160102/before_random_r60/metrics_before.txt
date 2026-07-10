@@ -1,0 +1,728 @@
+# HELP boostad_http_requests_total Http 요청 수 총합
+# TYPE boostad_http_requests_total counter
+boostad_http_requests_total{method="POST",route="/api/sdk/decision",status_code="201"} 7168
+boostad_http_requests_total{method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 9
+
+# HELP boostad_http_request_duration_seconds HTTP 요청 처리 시간
+# TYPE boostad_http_request_duration_seconds histogram
+boostad_http_request_duration_seconds_bucket{le="0.005",method="POST",route="/api/sdk/decision",status_code="201"} 3
+boostad_http_request_duration_seconds_bucket{le="0.01",method="POST",route="/api/sdk/decision",status_code="201"} 4251
+boostad_http_request_duration_seconds_bucket{le="0.025",method="POST",route="/api/sdk/decision",status_code="201"} 6111
+boostad_http_request_duration_seconds_bucket{le="0.05",method="POST",route="/api/sdk/decision",status_code="201"} 6349
+boostad_http_request_duration_seconds_bucket{le="0.1",method="POST",route="/api/sdk/decision",status_code="201"} 6496
+boostad_http_request_duration_seconds_bucket{le="0.25",method="POST",route="/api/sdk/decision",status_code="201"} 6761
+boostad_http_request_duration_seconds_bucket{le="0.5",method="POST",route="/api/sdk/decision",status_code="201"} 6879
+boostad_http_request_duration_seconds_bucket{le="1",method="POST",route="/api/sdk/decision",status_code="201"} 7041
+boostad_http_request_duration_seconds_bucket{le="2",method="POST",route="/api/sdk/decision",status_code="201"} 7130
+boostad_http_request_duration_seconds_bucket{le="5",method="POST",route="/api/sdk/decision",status_code="201"} 7168
+boostad_http_request_duration_seconds_bucket{le="+Inf",method="POST",route="/api/sdk/decision",status_code="201"} 7168
+boostad_http_request_duration_seconds_sum{method="POST",route="/api/sdk/decision",status_code="201"} 489.7683447999996
+boostad_http_request_duration_seconds_count{method="POST",route="/api/sdk/decision",status_code="201"} 7168
+boostad_http_request_duration_seconds_bucket{le="0.005",method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 0
+boostad_http_request_duration_seconds_bucket{le="0.01",method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 0
+boostad_http_request_duration_seconds_bucket{le="0.025",method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 0
+boostad_http_request_duration_seconds_bucket{le="0.05",method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 0
+boostad_http_request_duration_seconds_bucket{le="0.1",method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 0
+boostad_http_request_duration_seconds_bucket{le="0.25",method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 0
+boostad_http_request_duration_seconds_bucket{le="0.5",method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 0
+boostad_http_request_duration_seconds_bucket{le="1",method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 0
+boostad_http_request_duration_seconds_bucket{le="2",method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 0
+boostad_http_request_duration_seconds_bucket{le="5",method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 7
+boostad_http_request_duration_seconds_bucket{le="+Inf",method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 9
+boostad_http_request_duration_seconds_sum{method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 39.75760356
+boostad_http_request_duration_seconds_count{method="POST",route="/api/internal/loadtest/reset-rtb-state",status_code="201"} 9
+
+# HELP boostad_sse_connections 현재 SSE 커넥션 개수
+# TYPE boostad_sse_connections gauge
+
+# HELP boostad_http_in_flight_requests 현재 처리중인 Http 요청 수
+# TYPE boostad_http_in_flight_requests gauge
+boostad_http_in_flight_requests 0
+
+# HELP boostad_rtb_stage_duration_seconds RTB stage 처리 시간
+# TYPE boostad_rtb_stage_duration_seconds histogram
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="match_get_request_embedding",outcome="ok"} 5453
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="match_get_request_embedding",outcome="ok"} 6637
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="match_get_request_embedding",outcome="ok"} 6862
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="match_get_request_embedding",outcome="ok"} 6950
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="match_get_request_embedding",outcome="ok"} 6969
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="match_get_request_embedding",outcome="ok"} 7099
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="match_get_request_embedding",outcome="ok"} 7133
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="match_get_request_embedding",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="match_get_request_embedding",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="match_get_request_embedding",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="match_get_request_embedding",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="match_get_request_embedding",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_sum{stage="match_get_request_embedding",outcome="ok"} 31.97362635400002
+boostad_rtb_stage_duration_seconds_count{stage="match_get_request_embedding",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="match_ann_search",outcome="ok"} 251
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="match_ann_search",outcome="ok"} 6367
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="match_ann_search",outcome="ok"} 6695
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="match_ann_search",outcome="ok"} 6890
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="match_ann_search",outcome="ok"} 6994
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="match_ann_search",outcome="ok"} 7136
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="match_ann_search",outcome="ok"} 7164
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="match_ann_search",outcome="ok"} 7167
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="match_ann_search",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="match_ann_search",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="match_ann_search",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="match_ann_search",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_sum{stage="match_ann_search",outcome="ok"} 36.347517767999975
+boostad_rtb_stage_duration_seconds_count{stage="match_ann_search",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="match_ann_group_hits",outcome="ok"} 7160
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="match_ann_group_hits",outcome="ok"} 7167
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="match_ann_group_hits",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="match_ann_group_hits",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="match_ann_group_hits",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="match_ann_group_hits",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="match_ann_group_hits",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="match_ann_group_hits",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="match_ann_group_hits",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="match_ann_group_hits",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="match_ann_group_hits",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="match_ann_group_hits",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_sum{stage="match_ann_group_hits",outcome="ok"} 0.29656230600000205
+boostad_rtb_stage_duration_seconds_count{stage="match_ann_group_hits",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="match_load_retrieved_campaigns",outcome="ok"} 0
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="match_load_retrieved_campaigns",outcome="ok"} 5021
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="match_load_retrieved_campaigns",outcome="ok"} 6322
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="match_load_retrieved_campaigns",outcome="ok"} 6784
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="match_load_retrieved_campaigns",outcome="ok"} 6906
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="match_load_retrieved_campaigns",outcome="ok"} 7070
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="match_load_retrieved_campaigns",outcome="ok"} 7133
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="match_load_retrieved_campaigns",outcome="ok"} 7165
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="match_load_retrieved_campaigns",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="match_load_retrieved_campaigns",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="match_load_retrieved_campaigns",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="match_load_retrieved_campaigns",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_sum{stage="match_load_retrieved_campaigns",outcome="ok"} 74.65414518000016
+boostad_rtb_stage_duration_seconds_count{stage="match_load_retrieved_campaigns",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="match_score_loop",outcome="ok"} 6851
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="match_score_loop",outcome="ok"} 7153
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="match_score_loop",outcome="ok"} 7158
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="match_score_loop",outcome="ok"} 7162
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="match_score_loop",outcome="ok"} 7165
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="match_score_loop",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="match_score_loop",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="match_score_loop",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="match_score_loop",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="match_score_loop",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="match_score_loop",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="match_score_loop",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_sum{stage="match_score_loop",outcome="ok"} 2.61881064299999
+boostad_rtb_stage_duration_seconds_count{stage="match_score_loop",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="match",outcome="ok"} 0
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="match",outcome="ok"} 463
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="match",outcome="ok"} 5327
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="match",outcome="ok"} 6450
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="match",outcome="ok"} 6627
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="match",outcome="ok"} 6884
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="match",outcome="ok"} 7067
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="match",outcome="ok"} 7149
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="match",outcome="ok"} 7166
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="match",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="match",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="match",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_sum{stage="match",outcome="ok"} 146.77672561699973
+boostad_rtb_stage_duration_seconds_count{stage="match",outcome="ok"} 7168
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="reserve",outcome="ok"} 4959
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="reserve",outcome="ok"} 5950
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="reserve",outcome="ok"} 6189
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="reserve",outcome="ok"} 6385
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="reserve",outcome="ok"} 6476
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="reserve",outcome="ok"} 6621
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="reserve",outcome="ok"} 6755
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="reserve",outcome="ok"} 6875
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="reserve",outcome="ok"} 6999
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="reserve",outcome="ok"} 7030
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="reserve",outcome="ok"} 7031
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="reserve",outcome="ok"} 7031
+boostad_rtb_stage_duration_seconds_sum{stage="reserve",outcome="ok"} 225.47235359499965
+boostad_rtb_stage_duration_seconds_count{stage="reserve",outcome="ok"} 7031
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="select",outcome="ok"} 5183
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="select",outcome="ok"} 5187
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="select",outcome="ok"} 5187
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="select",outcome="ok"} 5187
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="select",outcome="ok"} 5187
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="select",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="select",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="select",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="select",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="select",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="select",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="select",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_sum{stage="select",outcome="ok"} 0.1496029159999999
+boostad_rtb_stage_duration_seconds_count{stage="select",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="rollback",outcome="ok"} 4485
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="rollback",outcome="ok"} 4628
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="rollback",outcome="ok"} 4724
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="rollback",outcome="ok"} 4825
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="rollback",outcome="ok"} 4882
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="rollback",outcome="ok"} 4980
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="rollback",outcome="ok"} 5078
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="rollback",outcome="ok"} 5138
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="rollback",outcome="ok"} 5179
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="rollback",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="rollback",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="rollback",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_sum{stage="rollback",outcome="ok"} 91.10229516300008
+boostad_rtb_stage_duration_seconds_count{stage="rollback",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="cache_auction",outcome="ok"} 4711
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="cache_auction",outcome="ok"} 4937
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="cache_auction",outcome="ok"} 5044
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="cache_auction",outcome="ok"} 5104
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="cache_auction",outcome="ok"} 5118
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="cache_auction",outcome="ok"} 5182
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="cache_auction",outcome="ok"} 5187
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="cache_auction",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="cache_auction",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="cache_auction",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="cache_auction",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="cache_auction",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_sum{stage="cache_auction",outcome="ok"} 9.174428663999986
+boostad_rtb_stage_duration_seconds_count{stage="cache_auction",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="total",outcome="ok"} 0
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="total",outcome="ok"} 1
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="total",outcome="ok"} 2944
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="total",outcome="ok"} 4425
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="total",outcome="ok"} 4582
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="total",outcome="ok"} 4681
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="total",outcome="ok"} 4891
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="total",outcome="ok"} 4969
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="total",outcome="ok"} 5076
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="total",outcome="ok"} 5150
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="total",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="total",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_sum{stage="total",outcome="ok"} 388.969697984
+boostad_rtb_stage_duration_seconds_count{stage="total",outcome="ok"} 5188
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="total",outcome="error"} 0
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="total",outcome="error"} 15
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="total",outcome="error"} 1459
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="total",outcome="error"} 1697
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="total",outcome="error"} 1769
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="total",outcome="error"} 1818
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="total",outcome="error"} 1871
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="total",outcome="error"} 1912
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="total",outcome="error"} 1965
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="total",outcome="error"} 1980
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="total",outcome="error"} 1980
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="total",outcome="error"} 1980
+boostad_rtb_stage_duration_seconds_sum{stage="total",outcome="error"} 97.63343126400011
+boostad_rtb_stage_duration_seconds_count{stage="total",outcome="error"} 1980
+boostad_rtb_stage_duration_seconds_bucket{le="0.001",stage="fallback_lookup",outcome="error"} 91
+boostad_rtb_stage_duration_seconds_bucket{le="0.005",stage="fallback_lookup",outcome="error"} 108
+boostad_rtb_stage_duration_seconds_bucket{le="0.01",stage="fallback_lookup",outcome="error"} 120
+boostad_rtb_stage_duration_seconds_bucket{le="0.025",stage="fallback_lookup",outcome="error"} 125
+boostad_rtb_stage_duration_seconds_bucket{le="0.05",stage="fallback_lookup",outcome="error"} 126
+boostad_rtb_stage_duration_seconds_bucket{le="0.1",stage="fallback_lookup",outcome="error"} 132
+boostad_rtb_stage_duration_seconds_bucket{le="0.25",stage="fallback_lookup",outcome="error"} 135
+boostad_rtb_stage_duration_seconds_bucket{le="0.5",stage="fallback_lookup",outcome="error"} 135
+boostad_rtb_stage_duration_seconds_bucket{le="1",stage="fallback_lookup",outcome="error"} 137
+boostad_rtb_stage_duration_seconds_bucket{le="2",stage="fallback_lookup",outcome="error"} 137
+boostad_rtb_stage_duration_seconds_bucket{le="5",stage="fallback_lookup",outcome="error"} 137
+boostad_rtb_stage_duration_seconds_bucket{le="+Inf",stage="fallback_lookup",outcome="error"} 137
+boostad_rtb_stage_duration_seconds_sum{stage="fallback_lookup",outcome="error"} 2.171656873
+boostad_rtb_stage_duration_seconds_count{stage="fallback_lookup",outcome="error"} 137
+
+# HELP boostad_rtb_requests_total RTB 요청 수
+# TYPE boostad_rtb_requests_total counter
+boostad_rtb_requests_total{result="success",high_intent="false"} 4891
+boostad_rtb_requests_total{result="error",high_intent="false"} 1958
+boostad_rtb_requests_total{result="success",high_intent="true"} 297
+boostad_rtb_requests_total{result="error",high_intent="true"} 22
+
+# HELP boostad_rtb_candidate_count RTB reserve 전 후보 수 분포
+# TYPE boostad_rtb_candidate_count histogram
+boostad_rtb_candidate_count_bucket{le="1"} 56
+boostad_rtb_candidate_count_bucket{le="2"} 125
+boostad_rtb_candidate_count_bucket{le="5"} 342
+boostad_rtb_candidate_count_bucket{le="10"} 534
+boostad_rtb_candidate_count_bucket{le="20"} 7031
+boostad_rtb_candidate_count_bucket{le="50"} 7031
+boostad_rtb_candidate_count_bucket{le="100"} 7031
+boostad_rtb_candidate_count_bucket{le="200"} 7031
+boostad_rtb_candidate_count_bucket{le="500"} 7031
+boostad_rtb_candidate_count_bucket{le="1000"} 7031
+boostad_rtb_candidate_count_bucket{le="+Inf"} 7031
+boostad_rtb_candidate_count_sum 130614
+boostad_rtb_candidate_count_count 7031
+
+# HELP boostad_rtb_reserve_attempt_candidate_count RTB reserve 단계에서 실제 시도한 후보 수 분포
+# TYPE boostad_rtb_reserve_attempt_candidate_count histogram
+boostad_rtb_reserve_attempt_candidate_count_bucket{le="1"} 56
+boostad_rtb_reserve_attempt_candidate_count_bucket{le="2"} 125
+boostad_rtb_reserve_attempt_candidate_count_bucket{le="5"} 342
+boostad_rtb_reserve_attempt_candidate_count_bucket{le="10"} 3065
+boostad_rtb_reserve_attempt_candidate_count_bucket{le="20"} 7031
+boostad_rtb_reserve_attempt_candidate_count_bucket{le="50"} 7031
+boostad_rtb_reserve_attempt_candidate_count_bucket{le="100"} 7031
+boostad_rtb_reserve_attempt_candidate_count_bucket{le="200"} 7031
+boostad_rtb_reserve_attempt_candidate_count_bucket{le="500"} 7031
+boostad_rtb_reserve_attempt_candidate_count_bucket{le="1000"} 7031
+boostad_rtb_reserve_attempt_candidate_count_bucket{le="+Inf"} 7031
+boostad_rtb_reserve_attempt_candidate_count_sum 107128
+boostad_rtb_reserve_attempt_candidate_count_count 7031
+
+# HELP boostad_rtb_reserved_candidate_count RTB reserve 성공 후보 수 분포
+# TYPE boostad_rtb_reserved_candidate_count histogram
+boostad_rtb_reserved_candidate_count_bucket{le="1"} 2115
+boostad_rtb_reserved_candidate_count_bucket{le="2"} 2623
+boostad_rtb_reserved_candidate_count_bucket{le="5"} 3971
+boostad_rtb_reserved_candidate_count_bucket{le="10"} 7031
+boostad_rtb_reserved_candidate_count_bucket{le="20"} 7031
+boostad_rtb_reserved_candidate_count_bucket{le="50"} 7031
+boostad_rtb_reserved_candidate_count_bucket{le="100"} 7031
+boostad_rtb_reserved_candidate_count_bucket{le="200"} 7031
+boostad_rtb_reserved_candidate_count_bucket{le="500"} 7031
+boostad_rtb_reserved_candidate_count_bucket{le="1000"} 7031
+boostad_rtb_reserved_candidate_count_bucket{le="+Inf"} 7031
+boostad_rtb_reserved_candidate_count_sum 31219
+boostad_rtb_reserved_candidate_count_count 7031
+
+# HELP boostad_rtb_reserve_window_attempt_count RTB reserve 성공 또는 종료 전까지 시도한 window 수 분포
+# TYPE boostad_rtb_reserve_window_attempt_count histogram
+boostad_rtb_reserve_window_attempt_count_bucket{le="1"} 3065
+boostad_rtb_reserve_window_attempt_count_bucket{le="2"} 7031
+boostad_rtb_reserve_window_attempt_count_bucket{le="3"} 7031
+boostad_rtb_reserve_window_attempt_count_bucket{le="5"} 7031
+boostad_rtb_reserve_window_attempt_count_bucket{le="10"} 7031
+boostad_rtb_reserve_window_attempt_count_bucket{le="20"} 7031
+boostad_rtb_reserve_window_attempt_count_bucket{le="50"} 7031
+boostad_rtb_reserve_window_attempt_count_bucket{le="100"} 7031
+boostad_rtb_reserve_window_attempt_count_bucket{le="+Inf"} 7031
+boostad_rtb_reserve_window_attempt_count_sum 10997
+boostad_rtb_reserve_window_attempt_count_count 7031
+
+# HELP boostad_rtb_rollback_candidate_count RTB rollback 대상 후보 수 분포
+# TYPE boostad_rtb_rollback_candidate_count histogram
+boostad_rtb_rollback_candidate_count_bucket{le="1"} 780
+boostad_rtb_rollback_candidate_count_bucket{le="2"} 1071
+boostad_rtb_rollback_candidate_count_bucket{le="5"} 2785
+boostad_rtb_rollback_candidate_count_bucket{le="10"} 5188
+boostad_rtb_rollback_candidate_count_bucket{le="20"} 5188
+boostad_rtb_rollback_candidate_count_bucket{le="50"} 5188
+boostad_rtb_rollback_candidate_count_bucket{le="100"} 5188
+boostad_rtb_rollback_candidate_count_bucket{le="200"} 5188
+boostad_rtb_rollback_candidate_count_bucket{le="500"} 5188
+boostad_rtb_rollback_candidate_count_bucket{le="1000"} 5188
+boostad_rtb_rollback_candidate_count_bucket{le="+Inf"} 5188
+boostad_rtb_rollback_candidate_count_sum 26031
+boostad_rtb_rollback_candidate_count_count 5188
+
+# HELP boostad_rtb_eligible_campaign_count RTB eligible 캠페인 수 분포
+# TYPE boostad_rtb_eligible_campaign_count histogram
+boostad_rtb_eligible_campaign_count_bucket{le="1"} 0
+boostad_rtb_eligible_campaign_count_bucket{le="2"} 0
+boostad_rtb_eligible_campaign_count_bucket{le="5"} 0
+boostad_rtb_eligible_campaign_count_bucket{le="10"} 0
+boostad_rtb_eligible_campaign_count_bucket{le="20"} 0
+boostad_rtb_eligible_campaign_count_bucket{le="50"} 0
+boostad_rtb_eligible_campaign_count_bucket{le="100"} 0
+boostad_rtb_eligible_campaign_count_bucket{le="200"} 0
+boostad_rtb_eligible_campaign_count_bucket{le="500"} 0
+boostad_rtb_eligible_campaign_count_bucket{le="1000"} 0
+boostad_rtb_eligible_campaign_count_bucket{le="+Inf"} 0
+boostad_rtb_eligible_campaign_count_sum 0
+boostad_rtb_eligible_campaign_count_count 0
+
+# HELP boostad_rtb_ann_tag_hit_count ANN retrieval이 반환한 tag hit 수 분포
+# TYPE boostad_rtb_ann_tag_hit_count histogram
+boostad_rtb_ann_tag_hit_count_bucket{le="1"} 0
+boostad_rtb_ann_tag_hit_count_bucket{le="2"} 0
+boostad_rtb_ann_tag_hit_count_bucket{le="5"} 0
+boostad_rtb_ann_tag_hit_count_bucket{le="10"} 0
+boostad_rtb_ann_tag_hit_count_bucket{le="20"} 0
+boostad_rtb_ann_tag_hit_count_bucket{le="50"} 0
+boostad_rtb_ann_tag_hit_count_bucket{le="100"} 7168
+boostad_rtb_ann_tag_hit_count_bucket{le="200"} 7168
+boostad_rtb_ann_tag_hit_count_bucket{le="500"} 7168
+boostad_rtb_ann_tag_hit_count_bucket{le="1000"} 7168
+boostad_rtb_ann_tag_hit_count_bucket{le="+Inf"} 7168
+boostad_rtb_ann_tag_hit_count_sum 458752
+boostad_rtb_ann_tag_hit_count_count 7168
+
+# HELP boostad_rtb_ann_retrieved_campaign_count ANN retrieval 이후 exact rerank로 넘긴 캠페인 수 분포
+# TYPE boostad_rtb_ann_retrieved_campaign_count histogram
+boostad_rtb_ann_retrieved_campaign_count_bucket{le="1"} 0
+boostad_rtb_ann_retrieved_campaign_count_bucket{le="2"} 0
+boostad_rtb_ann_retrieved_campaign_count_bucket{le="5"} 0
+boostad_rtb_ann_retrieved_campaign_count_bucket{le="10"} 0
+boostad_rtb_ann_retrieved_campaign_count_bucket{le="20"} 7168
+boostad_rtb_ann_retrieved_campaign_count_bucket{le="50"} 7168
+boostad_rtb_ann_retrieved_campaign_count_bucket{le="100"} 7168
+boostad_rtb_ann_retrieved_campaign_count_bucket{le="200"} 7168
+boostad_rtb_ann_retrieved_campaign_count_bucket{le="500"} 7168
+boostad_rtb_ann_retrieved_campaign_count_bucket{le="1000"} 7168
+boostad_rtb_ann_retrieved_campaign_count_bucket{le="+Inf"} 7168
+boostad_rtb_ann_retrieved_campaign_count_sum 143360
+boostad_rtb_ann_retrieved_campaign_count_count 7168
+
+# HELP boostad_rtb_bidlog_count 요청당 저장된 bid log 수 분포
+# TYPE boostad_rtb_bidlog_count histogram
+boostad_rtb_bidlog_count_bucket{le="1"} 272
+boostad_rtb_bidlog_count_bucket{le="2"} 780
+boostad_rtb_bidlog_count_bucket{le="5"} 2128
+boostad_rtb_bidlog_count_bucket{le="10"} 5188
+boostad_rtb_bidlog_count_bucket{le="20"} 5188
+boostad_rtb_bidlog_count_bucket{le="50"} 5188
+boostad_rtb_bidlog_count_bucket{le="100"} 5188
+boostad_rtb_bidlog_count_bucket{le="200"} 5188
+boostad_rtb_bidlog_count_bucket{le="500"} 5188
+boostad_rtb_bidlog_count_bucket{le="1000"} 5188
+boostad_rtb_bidlog_count_bucket{le="+Inf"} 5188
+boostad_rtb_bidlog_count_sum 31219
+boostad_rtb_bidlog_count_count 5188
+
+# HELP boostad_rtb_fallback_total RTB fallback 발생 수
+# TYPE boostad_rtb_fallback_total counter
+boostad_rtb_fallback_total{reason="no_candidates"} 137
+
+# HELP boostad_rtb_reservation_failures_total RTB 예산 선점 실패 수
+# TYPE boostad_rtb_reservation_failures_total counter
+boostad_rtb_reservation_failures_total{reason="rejected"} 75909
+
+# HELP boostad_rtb_payload_bytes RTB request/response payload bytes
+# TYPE boostad_rtb_payload_bytes histogram
+boostad_rtb_payload_bytes_bucket{le="128",direction="request"} 0
+boostad_rtb_payload_bytes_bucket{le="256",direction="request"} 7168
+boostad_rtb_payload_bytes_bucket{le="512",direction="request"} 7168
+boostad_rtb_payload_bytes_bucket{le="1024",direction="request"} 7168
+boostad_rtb_payload_bytes_bucket{le="2048",direction="request"} 7168
+boostad_rtb_payload_bytes_bucket{le="4096",direction="request"} 7168
+boostad_rtb_payload_bytes_bucket{le="8192",direction="request"} 7168
+boostad_rtb_payload_bytes_bucket{le="16384",direction="request"} 7168
+boostad_rtb_payload_bytes_bucket{le="32768",direction="request"} 7168
+boostad_rtb_payload_bytes_bucket{le="+Inf",direction="request"} 7168
+boostad_rtb_payload_bytes_sum{direction="request"} 1067288
+boostad_rtb_payload_bytes_count{direction="request"} 7168
+boostad_rtb_payload_bytes_bucket{le="128",direction="response"} 1980
+boostad_rtb_payload_bytes_bucket{le="256",direction="response"} 1980
+boostad_rtb_payload_bytes_bucket{le="512",direction="response"} 1980
+boostad_rtb_payload_bytes_bucket{le="1024",direction="response"} 7168
+boostad_rtb_payload_bytes_bucket{le="2048",direction="response"} 7168
+boostad_rtb_payload_bytes_bucket{le="4096",direction="response"} 7168
+boostad_rtb_payload_bytes_bucket{le="8192",direction="response"} 7168
+boostad_rtb_payload_bytes_bucket{le="16384",direction="response"} 7168
+boostad_rtb_payload_bytes_bucket{le="32768",direction="response"} 7168
+boostad_rtb_payload_bytes_bucket{le="+Inf",direction="response"} 7168
+boostad_rtb_payload_bytes_sum{direction="response"} 3771372
+boostad_rtb_payload_bytes_count{direction="response"} 7168
+
+# HELP boostad_dependency_duration_seconds 외부 의존성 호출 시간
+# TYPE boostad_dependency_duration_seconds histogram
+boostad_dependency_duration_seconds_bucket{le="0.001",dependency="redis",operation="increment_spent",outcome="ok"} 25982
+boostad_dependency_duration_seconds_bucket{le="0.005",dependency="redis",operation="increment_spent",outcome="ok"} 28403
+boostad_dependency_duration_seconds_bucket{le="0.01",dependency="redis",operation="increment_spent",outcome="ok"} 29585
+boostad_dependency_duration_seconds_bucket{le="0.025",dependency="redis",operation="increment_spent",outcome="ok"} 30355
+boostad_dependency_duration_seconds_bucket{le="0.05",dependency="redis",operation="increment_spent",outcome="ok"} 30504
+boostad_dependency_duration_seconds_bucket{le="0.1",dependency="redis",operation="increment_spent",outcome="ok"} 31078
+boostad_dependency_duration_seconds_bucket{le="0.25",dependency="redis",operation="increment_spent",outcome="ok"} 31189
+boostad_dependency_duration_seconds_bucket{le="0.5",dependency="redis",operation="increment_spent",outcome="ok"} 31206
+boostad_dependency_duration_seconds_bucket{le="1",dependency="redis",operation="increment_spent",outcome="ok"} 31219
+boostad_dependency_duration_seconds_bucket{le="2",dependency="redis",operation="increment_spent",outcome="ok"} 31219
+boostad_dependency_duration_seconds_bucket{le="5",dependency="redis",operation="increment_spent",outcome="ok"} 31219
+boostad_dependency_duration_seconds_bucket{le="+Inf",dependency="redis",operation="increment_spent",outcome="ok"} 31219
+boostad_dependency_duration_seconds_sum{dependency="redis",operation="increment_spent",outcome="ok"} 111.25721020900002
+boostad_dependency_duration_seconds_count{dependency="redis",operation="increment_spent",outcome="ok"} 31219
+boostad_dependency_duration_seconds_bucket{le="0.001",dependency="redis",operation="decrement_spent",outcome="ok"} 23053
+boostad_dependency_duration_seconds_bucket{le="0.005",dependency="redis",operation="decrement_spent",outcome="ok"} 24209
+boostad_dependency_duration_seconds_bucket{le="0.01",dependency="redis",operation="decrement_spent",outcome="ok"} 24965
+boostad_dependency_duration_seconds_bucket{le="0.025",dependency="redis",operation="decrement_spent",outcome="ok"} 25507
+boostad_dependency_duration_seconds_bucket{le="0.05",dependency="redis",operation="decrement_spent",outcome="ok"} 25621
+boostad_dependency_duration_seconds_bucket{le="0.1",dependency="redis",operation="decrement_spent",outcome="ok"} 26007
+boostad_dependency_duration_seconds_bucket{le="0.25",dependency="redis",operation="decrement_spent",outcome="ok"} 26027
+boostad_dependency_duration_seconds_bucket{le="0.5",dependency="redis",operation="decrement_spent",outcome="ok"} 26029
+boostad_dependency_duration_seconds_bucket{le="1",dependency="redis",operation="decrement_spent",outcome="ok"} 26031
+boostad_dependency_duration_seconds_bucket{le="2",dependency="redis",operation="decrement_spent",outcome="ok"} 26031
+boostad_dependency_duration_seconds_bucket{le="5",dependency="redis",operation="decrement_spent",outcome="ok"} 26031
+boostad_dependency_duration_seconds_bucket{le="+Inf",dependency="redis",operation="decrement_spent",outcome="ok"} 26031
+boostad_dependency_duration_seconds_sum{dependency="redis",operation="decrement_spent",outcome="ok"} 56.823757933000074
+boostad_dependency_duration_seconds_count{dependency="redis",operation="decrement_spent",outcome="ok"} 26031
+boostad_dependency_duration_seconds_bucket{le="0.001",dependency="redis",operation="set_auction_data",outcome="ok"} 4713
+boostad_dependency_duration_seconds_bucket{le="0.005",dependency="redis",operation="set_auction_data",outcome="ok"} 4938
+boostad_dependency_duration_seconds_bucket{le="0.01",dependency="redis",operation="set_auction_data",outcome="ok"} 5044
+boostad_dependency_duration_seconds_bucket{le="0.025",dependency="redis",operation="set_auction_data",outcome="ok"} 5104
+boostad_dependency_duration_seconds_bucket{le="0.05",dependency="redis",operation="set_auction_data",outcome="ok"} 5118
+boostad_dependency_duration_seconds_bucket{le="0.1",dependency="redis",operation="set_auction_data",outcome="ok"} 5182
+boostad_dependency_duration_seconds_bucket{le="0.25",dependency="redis",operation="set_auction_data",outcome="ok"} 5187
+boostad_dependency_duration_seconds_bucket{le="0.5",dependency="redis",operation="set_auction_data",outcome="ok"} 5188
+boostad_dependency_duration_seconds_bucket{le="1",dependency="redis",operation="set_auction_data",outcome="ok"} 5188
+boostad_dependency_duration_seconds_bucket{le="2",dependency="redis",operation="set_auction_data",outcome="ok"} 5188
+boostad_dependency_duration_seconds_bucket{le="5",dependency="redis",operation="set_auction_data",outcome="ok"} 5188
+boostad_dependency_duration_seconds_bucket{le="+Inf",dependency="redis",operation="set_auction_data",outcome="ok"} 5188
+boostad_dependency_duration_seconds_sum{dependency="redis",operation="set_auction_data",outcome="ok"} 9.101168960000019
+boostad_dependency_duration_seconds_count{dependency="redis",operation="set_auction_data",outcome="ok"} 5188
+boostad_dependency_duration_seconds_bucket{le="0.001",dependency="redis",operation="increment_spent",outcome="rejected"} 67866
+boostad_dependency_duration_seconds_bucket{le="0.005",dependency="redis",operation="increment_spent",outcome="rejected"} 72951
+boostad_dependency_duration_seconds_bucket{le="0.01",dependency="redis",operation="increment_spent",outcome="rejected"} 74533
+boostad_dependency_duration_seconds_bucket{le="0.025",dependency="redis",operation="increment_spent",outcome="rejected"} 75383
+boostad_dependency_duration_seconds_bucket{le="0.05",dependency="redis",operation="increment_spent",outcome="rejected"} 75676
+boostad_dependency_duration_seconds_bucket{le="0.1",dependency="redis",operation="increment_spent",outcome="rejected"} 75845
+boostad_dependency_duration_seconds_bucket{le="0.25",dependency="redis",operation="increment_spent",outcome="rejected"} 75893
+boostad_dependency_duration_seconds_bucket{le="0.5",dependency="redis",operation="increment_spent",outcome="rejected"} 75904
+boostad_dependency_duration_seconds_bucket{le="1",dependency="redis",operation="increment_spent",outcome="rejected"} 75909
+boostad_dependency_duration_seconds_bucket{le="2",dependency="redis",operation="increment_spent",outcome="rejected"} 75909
+boostad_dependency_duration_seconds_bucket{le="5",dependency="redis",operation="increment_spent",outcome="rejected"} 75909
+boostad_dependency_duration_seconds_bucket{le="+Inf",dependency="redis",operation="increment_spent",outcome="rejected"} 75909
+boostad_dependency_duration_seconds_sum{dependency="redis",operation="increment_spent",outcome="rejected"} 89.29102584099991
+boostad_dependency_duration_seconds_count{dependency="redis",operation="increment_spent",outcome="rejected"} 75909
+boostad_dependency_duration_seconds_bucket{le="0.001",dependency="redis",operation="find_fallback_campaign",outcome="ok"} 91
+boostad_dependency_duration_seconds_bucket{le="0.005",dependency="redis",operation="find_fallback_campaign",outcome="ok"} 108
+boostad_dependency_duration_seconds_bucket{le="0.01",dependency="redis",operation="find_fallback_campaign",outcome="ok"} 120
+boostad_dependency_duration_seconds_bucket{le="0.025",dependency="redis",operation="find_fallback_campaign",outcome="ok"} 125
+boostad_dependency_duration_seconds_bucket{le="0.05",dependency="redis",operation="find_fallback_campaign",outcome="ok"} 126
+boostad_dependency_duration_seconds_bucket{le="0.1",dependency="redis",operation="find_fallback_campaign",outcome="ok"} 132
+boostad_dependency_duration_seconds_bucket{le="0.25",dependency="redis",operation="find_fallback_campaign",outcome="ok"} 135
+boostad_dependency_duration_seconds_bucket{le="0.5",dependency="redis",operation="find_fallback_campaign",outcome="ok"} 135
+boostad_dependency_duration_seconds_bucket{le="1",dependency="redis",operation="find_fallback_campaign",outcome="ok"} 137
+boostad_dependency_duration_seconds_bucket{le="2",dependency="redis",operation="find_fallback_campaign",outcome="ok"} 137
+boostad_dependency_duration_seconds_bucket{le="5",dependency="redis",operation="find_fallback_campaign",outcome="ok"} 137
+boostad_dependency_duration_seconds_bucket{le="+Inf",dependency="redis",operation="find_fallback_campaign",outcome="ok"} 137
+boostad_dependency_duration_seconds_sum{dependency="redis",operation="find_fallback_campaign",outcome="ok"} 2.1593424600000004
+boostad_dependency_duration_seconds_count{dependency="redis",operation="find_fallback_campaign",outcome="ok"} 137
+
+# HELP boostad_dependency_calls_total 외부 의존성 호출 수
+# TYPE boostad_dependency_calls_total counter
+boostad_dependency_calls_total{dependency="redis",operation="increment_spent",outcome="ok"} 31219
+boostad_dependency_calls_total{dependency="redis",operation="decrement_spent",outcome="ok"} 26031
+boostad_dependency_calls_total{dependency="redis",operation="set_auction_data",outcome="ok"} 5188
+boostad_dependency_calls_total{dependency="redis",operation="increment_spent",outcome="rejected"} 75909
+boostad_dependency_calls_total{dependency="redis",operation="find_fallback_campaign",outcome="ok"} 137
+
+# HELP boostad_bidlog_pubsub_messages_total BidLog Redis pub/sub 메시지 처리 수
+# TYPE boostad_bidlog_pubsub_messages_total counter
+
+# HELP boostad_bidlog_pubsub_events_total BidLog pub/sub 이벤트 처리 수
+# TYPE boostad_bidlog_pubsub_events_total counter
+
+# HELP boostad_bidlog_pubsub_batch_size BidLog pub/sub 메시지당 이벤트 개수
+# TYPE boostad_bidlog_pubsub_batch_size histogram
+boostad_bidlog_pubsub_batch_size_bucket{le="1"} 0
+boostad_bidlog_pubsub_batch_size_bucket{le="2"} 0
+boostad_bidlog_pubsub_batch_size_bucket{le="5"} 0
+boostad_bidlog_pubsub_batch_size_bucket{le="10"} 0
+boostad_bidlog_pubsub_batch_size_bucket{le="20"} 0
+boostad_bidlog_pubsub_batch_size_bucket{le="50"} 0
+boostad_bidlog_pubsub_batch_size_bucket{le="100"} 0
+boostad_bidlog_pubsub_batch_size_bucket{le="200"} 0
+boostad_bidlog_pubsub_batch_size_bucket{le="500"} 0
+boostad_bidlog_pubsub_batch_size_bucket{le="+Inf"} 0
+boostad_bidlog_pubsub_batch_size_sum 0
+boostad_bidlog_pubsub_batch_size_count 0
+
+# HELP boostad_bidlog_pubsub_delivery_lag_seconds BidLog worker publish부터 API fan-out까지 지연 시간
+# TYPE boostad_bidlog_pubsub_delivery_lag_seconds histogram
+boostad_bidlog_pubsub_delivery_lag_seconds_bucket{le="0.001"} 0
+boostad_bidlog_pubsub_delivery_lag_seconds_bucket{le="0.005"} 0
+boostad_bidlog_pubsub_delivery_lag_seconds_bucket{le="0.01"} 0
+boostad_bidlog_pubsub_delivery_lag_seconds_bucket{le="0.025"} 0
+boostad_bidlog_pubsub_delivery_lag_seconds_bucket{le="0.05"} 0
+boostad_bidlog_pubsub_delivery_lag_seconds_bucket{le="0.1"} 0
+boostad_bidlog_pubsub_delivery_lag_seconds_bucket{le="0.25"} 0
+boostad_bidlog_pubsub_delivery_lag_seconds_bucket{le="0.5"} 0
+boostad_bidlog_pubsub_delivery_lag_seconds_bucket{le="1"} 0
+boostad_bidlog_pubsub_delivery_lag_seconds_bucket{le="2"} 0
+boostad_bidlog_pubsub_delivery_lag_seconds_bucket{le="5"} 0
+boostad_bidlog_pubsub_delivery_lag_seconds_bucket{le="+Inf"} 0
+boostad_bidlog_pubsub_delivery_lag_seconds_sum 0
+boostad_bidlog_pubsub_delivery_lag_seconds_count 0
+
+# HELP boostad_queue_jobs BullMQ queue state별 job 수
+# TYPE boostad_queue_jobs gauge
+boostad_queue_jobs{queue="bidlog-queue",state="waiting"} 0
+boostad_queue_jobs{queue="bidlog-queue",state="active"} 0
+boostad_queue_jobs{queue="bidlog-queue",state="delayed"} 0
+boostad_queue_jobs{queue="bidlog-queue",state="prioritized"} 0
+boostad_queue_jobs{queue="bidlog-queue",state="paused"} 0
+boostad_queue_jobs{queue="bidlog-queue",state="completed"} 0
+boostad_queue_jobs{queue="bidlog-queue",state="failed"} 0
+
+# HELP boostad_backend_process_cpu_user_seconds_total Total user CPU time spent in seconds.
+# TYPE boostad_backend_process_cpu_user_seconds_total counter
+boostad_backend_process_cpu_user_seconds_total{service="backend"} 175.41563199999982
+
+# HELP boostad_backend_process_cpu_system_seconds_total Total system CPU time spent in seconds.
+# TYPE boostad_backend_process_cpu_system_seconds_total counter
+boostad_backend_process_cpu_system_seconds_total{service="backend"} 8.531253000000003
+
+# HELP boostad_backend_process_cpu_seconds_total Total user and system CPU time spent in seconds.
+# TYPE boostad_backend_process_cpu_seconds_total counter
+boostad_backend_process_cpu_seconds_total{service="backend"} 183.94688500000004
+
+# HELP boostad_backend_process_start_time_seconds Start time of the process since unix epoch in seconds.
+# TYPE boostad_backend_process_start_time_seconds gauge
+boostad_backend_process_start_time_seconds{service="backend"} 1783666303
+
+# HELP boostad_backend_process_resident_memory_bytes Resident memory size in bytes.
+# TYPE boostad_backend_process_resident_memory_bytes gauge
+boostad_backend_process_resident_memory_bytes{service="backend"} 716324864
+
+# HELP boostad_backend_process_virtual_memory_bytes Virtual memory size in bytes.
+# TYPE boostad_backend_process_virtual_memory_bytes gauge
+boostad_backend_process_virtual_memory_bytes{service="backend"} 11455946752
+
+# HELP boostad_backend_process_heap_bytes Process heap size in bytes.
+# TYPE boostad_backend_process_heap_bytes gauge
+boostad_backend_process_heap_bytes{service="backend"} 1079054336
+
+# HELP boostad_backend_process_open_fds Number of open file descriptors.
+# TYPE boostad_backend_process_open_fds gauge
+boostad_backend_process_open_fds{service="backend"} 27
+
+# HELP boostad_backend_process_max_fds Maximum number of open file descriptors.
+# TYPE boostad_backend_process_max_fds gauge
+boostad_backend_process_max_fds{service="backend"} 1048576
+
+# HELP boostad_backend_nodejs_eventloop_lag_seconds Lag of event loop in seconds.
+# TYPE boostad_backend_nodejs_eventloop_lag_seconds gauge
+boostad_backend_nodejs_eventloop_lag_seconds{service="backend"} 0.001013917
+
+# HELP boostad_backend_nodejs_eventloop_lag_min_seconds The minimum recorded event loop delay.
+# TYPE boostad_backend_nodejs_eventloop_lag_min_seconds gauge
+boostad_backend_nodejs_eventloop_lag_min_seconds{service="backend"} 0.009101312
+
+# HELP boostad_backend_nodejs_eventloop_lag_max_seconds The maximum recorded event loop delay.
+# TYPE boostad_backend_nodejs_eventloop_lag_max_seconds gauge
+boostad_backend_nodejs_eventloop_lag_max_seconds{service="backend"} 0.022921215
+
+# HELP boostad_backend_nodejs_eventloop_lag_mean_seconds The mean of the recorded event loop delays.
+# TYPE boostad_backend_nodejs_eventloop_lag_mean_seconds gauge
+boostad_backend_nodejs_eventloop_lag_mean_seconds{service="backend"} 0.010340064668656716
+
+# HELP boostad_backend_nodejs_eventloop_lag_stddev_seconds The standard deviation of the recorded event loop delays.
+# TYPE boostad_backend_nodejs_eventloop_lag_stddev_seconds gauge
+boostad_backend_nodejs_eventloop_lag_stddev_seconds{service="backend"} 0.0008905116661634681
+
+# HELP boostad_backend_nodejs_eventloop_lag_p50_seconds The 50th percentile of the recorded event loop delays.
+# TYPE boostad_backend_nodejs_eventloop_lag_p50_seconds gauge
+boostad_backend_nodejs_eventloop_lag_p50_seconds{service="backend"} 0.010231807
+
+# HELP boostad_backend_nodejs_eventloop_lag_p90_seconds The 90th percentile of the recorded event loop delays.
+# TYPE boostad_backend_nodejs_eventloop_lag_p90_seconds gauge
+boostad_backend_nodejs_eventloop_lag_p90_seconds{service="backend"} 0.011091967
+
+# HELP boostad_backend_nodejs_eventloop_lag_p99_seconds The 99th percentile of the recorded event loop delays.
+# TYPE boostad_backend_nodejs_eventloop_lag_p99_seconds gauge
+boostad_backend_nodejs_eventloop_lag_p99_seconds{service="backend"} 0.011673599
+
+# HELP boostad_backend_nodejs_active_resources Number of active resources that are currently keeping the event loop alive, grouped by async resource type.
+# TYPE boostad_backend_nodejs_active_resources gauge
+boostad_backend_nodejs_active_resources{type="PipeWrap",service="backend"} 2
+boostad_backend_nodejs_active_resources{type="TCPSocketWrap",service="backend"} 8
+boostad_backend_nodejs_active_resources{type="TCPServerWrap",service="backend"} 1
+boostad_backend_nodejs_active_resources{type="Timeout",service="backend"} 2
+boostad_backend_nodejs_active_resources{type="Immediate",service="backend"} 1
+
+# HELP boostad_backend_nodejs_active_resources_total Total number of active resources.
+# TYPE boostad_backend_nodejs_active_resources_total gauge
+boostad_backend_nodejs_active_resources_total{service="backend"} 14
+
+# HELP boostad_backend_nodejs_active_handles Number of active libuv handles grouped by handle type. Every handle type is C++ class name.
+# TYPE boostad_backend_nodejs_active_handles gauge
+boostad_backend_nodejs_active_handles{type="Socket",service="backend"} 10
+boostad_backend_nodejs_active_handles{type="Server",service="backend"} 1
+
+# HELP boostad_backend_nodejs_active_handles_total Total number of active handles.
+# TYPE boostad_backend_nodejs_active_handles_total gauge
+boostad_backend_nodejs_active_handles_total{service="backend"} 11
+
+# HELP boostad_backend_nodejs_active_requests Number of active libuv requests grouped by request type. Every request type is C++ class name.
+# TYPE boostad_backend_nodejs_active_requests gauge
+
+# HELP boostad_backend_nodejs_active_requests_total Total number of active requests.
+# TYPE boostad_backend_nodejs_active_requests_total gauge
+boostad_backend_nodejs_active_requests_total{service="backend"} 0
+
+# HELP boostad_backend_nodejs_heap_size_total_bytes Process heap size from Node.js in bytes.
+# TYPE boostad_backend_nodejs_heap_size_total_bytes gauge
+boostad_backend_nodejs_heap_size_total_bytes{service="backend"} 286007296
+
+# HELP boostad_backend_nodejs_heap_size_used_bytes Process heap size used from Node.js in bytes.
+# TYPE boostad_backend_nodejs_heap_size_used_bytes gauge
+boostad_backend_nodejs_heap_size_used_bytes{service="backend"} 157443656
+
+# HELP boostad_backend_nodejs_external_memory_bytes Node.js external memory size in bytes.
+# TYPE boostad_backend_nodejs_external_memory_bytes gauge
+boostad_backend_nodejs_external_memory_bytes{service="backend"} 33362417
+
+# HELP boostad_backend_nodejs_heap_space_size_total_bytes Process heap space size total from Node.js in bytes.
+# TYPE boostad_backend_nodejs_heap_space_size_total_bytes gauge
+boostad_backend_nodejs_heap_space_size_total_bytes{space="read_only",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_total_bytes{space="new",service="backend"} 134217728
+boostad_backend_nodejs_heap_space_size_total_bytes{space="old",service="backend"} 133525504
+boostad_backend_nodejs_heap_space_size_total_bytes{space="code",service="backend"} 5767168
+boostad_backend_nodejs_heap_space_size_total_bytes{space="shared",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_total_bytes{space="trusted",service="backend"} 5402624
+boostad_backend_nodejs_heap_space_size_total_bytes{space="shared_trusted",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_total_bytes{space="new_large_object",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_total_bytes{space="large_object",service="backend"} 6914048
+boostad_backend_nodejs_heap_space_size_total_bytes{space="code_large_object",service="backend"} 180224
+boostad_backend_nodejs_heap_space_size_total_bytes{space="shared_large_object",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_total_bytes{space="shared_trusted_large_object",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_total_bytes{space="trusted_large_object",service="backend"} 0
+
+# HELP boostad_backend_nodejs_heap_space_size_used_bytes Process heap space size used from Node.js in bytes.
+# TYPE boostad_backend_nodejs_heap_space_size_used_bytes gauge
+boostad_backend_nodejs_heap_space_size_used_bytes{space="read_only",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_used_bytes{space="new",service="backend"} 55884328
+boostad_backend_nodejs_heap_space_size_used_bytes{space="old",service="backend"} 85189064
+boostad_backend_nodejs_heap_space_size_used_bytes{space="code",service="backend"} 5011200
+boostad_backend_nodejs_heap_space_size_used_bytes{space="shared",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_used_bytes{space="trusted",service="backend"} 4322272
+boostad_backend_nodejs_heap_space_size_used_bytes{space="shared_trusted",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_used_bytes{space="new_large_object",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_used_bytes{space="large_object",service="backend"} 6864008
+boostad_backend_nodejs_heap_space_size_used_bytes{space="code_large_object",service="backend"} 176800
+boostad_backend_nodejs_heap_space_size_used_bytes{space="shared_large_object",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_used_bytes{space="shared_trusted_large_object",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_used_bytes{space="trusted_large_object",service="backend"} 0
+
+# HELP boostad_backend_nodejs_heap_space_size_available_bytes Process heap space size available from Node.js in bytes.
+# TYPE boostad_backend_nodejs_heap_space_size_available_bytes gauge
+boostad_backend_nodejs_heap_space_size_available_bytes{space="read_only",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_available_bytes{space="new",service="backend"} 11220440
+boostad_backend_nodejs_heap_space_size_available_bytes{space="old",service="backend"} 48095936
+boostad_backend_nodejs_heap_space_size_available_bytes{space="code",service="backend"} 755264
+boostad_backend_nodejs_heap_space_size_available_bytes{space="shared",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_available_bytes{space="trusted",service="backend"} 1064936
+boostad_backend_nodejs_heap_space_size_available_bytes{space="shared_trusted",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_available_bytes{space="new_large_object",service="backend"} 67108864
+boostad_backend_nodejs_heap_space_size_available_bytes{space="large_object",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_available_bytes{space="code_large_object",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_available_bytes{space="shared_large_object",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_available_bytes{space="shared_trusted_large_object",service="backend"} 0
+boostad_backend_nodejs_heap_space_size_available_bytes{space="trusted_large_object",service="backend"} 0
+
+# HELP boostad_backend_nodejs_version_info Node.js version info.
+# TYPE boostad_backend_nodejs_version_info gauge
+boostad_backend_nodejs_version_info{version="v24.18.0",major="24",minor="18",patch="0",service="backend"} 1
+
+# HELP boostad_backend_nodejs_gc_duration_seconds Garbage collection duration by kind, one of major, minor, incremental or weakcb.
+# TYPE boostad_backend_nodejs_gc_duration_seconds histogram
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="0.001",kind="minor",service="backend"} 79
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="0.01",kind="minor",service="backend"} 689
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="0.1",kind="minor",service="backend"} 809
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="1",kind="minor",service="backend"} 811
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="2",kind="minor",service="backend"} 811
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="5",kind="minor",service="backend"} 811
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="+Inf",kind="minor",service="backend"} 811
+boostad_backend_nodejs_gc_duration_seconds_sum{kind="minor",service="backend"} 5.736474318265914
+boostad_backend_nodejs_gc_duration_seconds_count{kind="minor",service="backend"} 811
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="0.001",kind="major",service="backend"} 0
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="0.01",kind="major",service="backend"} 189
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="0.1",kind="major",service="backend"} 201
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="1",kind="major",service="backend"} 202
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="2",kind="major",service="backend"} 202
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="5",kind="major",service="backend"} 202
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="+Inf",kind="major",service="backend"} 202
+boostad_backend_nodejs_gc_duration_seconds_sum{kind="major",service="backend"} 1.3099044604301449
+boostad_backend_nodejs_gc_duration_seconds_count{kind="major",service="backend"} 202
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="0.001",kind="incremental",service="backend"} 158
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="0.01",kind="incremental",service="backend"} 195
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="0.1",kind="incremental",service="backend"} 199
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="1",kind="incremental",service="backend"} 200
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="2",kind="incremental",service="backend"} 200
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="5",kind="incremental",service="backend"} 200
+boostad_backend_nodejs_gc_duration_seconds_bucket{le="+Inf",kind="incremental",service="backend"} 200
+boostad_backend_nodejs_gc_duration_seconds_sum{kind="incremental",service="backend"} 0.44112654435634635
+boostad_backend_nodejs_gc_duration_seconds_count{kind="incremental",service="backend"} 200
