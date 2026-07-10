@@ -27,6 +27,10 @@ for command in curl jq node k6 git shasum; do
   require_cmd "$command"
 done
 
+if [ "${RESTART_BACKEND_EACH_CELL:-false}" = "true" ]; then
+  require_cmd docker
+fi
+
 mkdir -p "$output_root"
 
 (
@@ -49,6 +53,8 @@ jq -n \
   --arg gitDiffSha "$git_diff_sha" \
   --arg corpusSha "$corpus_sha" \
   --arg corpusSeed "$corpus_seed" \
+  --arg restartEachCell "${RESTART_BACKEND_EACH_CELL:-false}" \
+  --arg backendContainer "${BACKEND_CONTAINER:-boostad-backend-local}" \
   --argjson corpusSize "$corpus_size" \
   '{
     runId: $runId,
@@ -58,10 +64,61 @@ jq -n \
     matrix: $matrix,
     gitSha: $gitSha,
     gitDiffSha: $gitDiffSha,
-    corpus: {sha256: $corpusSha, seed: $corpusSeed, size: $corpusSize}
+    corpus: {sha256: $corpusSha, seed: $corpusSeed, size: $corpusSize},
+    lifecycle: {
+      restartBackendEachCell: ($restartEachCell == "true"),
+      backendContainer: $backendContainer,
+      warmupOutsideCorpus: true,
+      resetAfterWarmup: true
+    }
   }' >"${output_root}/manifest.json"
 
 suite_failed=0
+
+restart_backend() {
+  if [ "${RESTART_BACKEND_EACH_CELL:-false}" != "true" ]; then
+    return 0
+  fi
+
+  local container="${BACKEND_CONTAINER:-boostad-backend-local}"
+  docker restart "$container" >/dev/null || return 1
+
+  for _ in $(seq 1 120); do
+    if curl --fail --silent --show-error "${base_url}/api/metrics" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+
+  printf '[suite] backend readiness timeout: %s\n' "$container" >&2
+  return 1
+}
+
+reset_cell_state() {
+  local output="$1"
+  (
+    cd "$loadtest_dir"
+    RESET_ONLY=true \
+    RESET_OUTPUT="$output" \
+    EXPECTED_CAMPAIGN_COUNT="${EXPECTED_CAMPAIGN_COUNT:-1000}" \
+    LOADTEST_RESET_TOKEN="${LOADTEST_RESET_TOKEN:-}" \
+    RESET_BASE_URL="${RESET_BASE_URL:-$base_url}" \
+      scripts/reset_and_run_k6.sh local
+  )
+}
+
+warm_backend() {
+  local output="$1"
+  curl --fail --silent --show-error \
+    -X POST "${base_url}/api/sdk/decision" \
+    -H 'Content-Type: application/json' \
+    --data '{"blogKey":"test-blog","postUrl":"http://127.0.0.1/posts/loadtest-warmup","tags":["typescript","react","nestjs"],"behaviorScore":50,"isHighIntent":false}' \
+    >"$output" || return 1
+
+  jq -e \
+    '.status == "success" and (.data.auctionId | type == "string") and (.data.campaign.id | type == "string")' \
+    "$output" >/dev/null
+}
 
 for cell in $matrix; do
   scenario="${cell%%:*}"
@@ -82,18 +139,34 @@ for cell in $matrix; do
 
   printf '[suite] start %s\n' "$tag"
 
-  (
-    cd "$loadtest_dir"
-    RESET_ONLY=true \
-    RESET_OUTPUT="${cell_dir}/reset_response.json" \
-    EXPECTED_CAMPAIGN_COUNT="${EXPECTED_CAMPAIGN_COUNT:-1000}" \
-    LOADTEST_RESET_TOKEN="${LOADTEST_RESET_TOKEN:-}" \
-    RESET_BASE_URL="${RESET_BASE_URL:-$base_url}" \
-      scripts/reset_and_run_k6.sh local
-  )
+  restart_backend >"${cell_dir}/backend_restart.txt" 2>&1
+  restart_rc=$?
+  if [ "$restart_rc" -ne 0 ]; then
+    printf '%s\n' "$restart_rc" >"${cell_dir}/backend_restart_exit_code.txt"
+    suite_failed=1
+    continue
+  fi
+
+  reset_cell_state "${cell_dir}/reset_initial_response.json"
   reset_rc=$?
   if [ "$reset_rc" -ne 0 ]; then
     printf '%s\n' "$reset_rc" >"${cell_dir}/reset_exit_code.txt"
+    suite_failed=1
+    continue
+  fi
+
+  warm_backend "${cell_dir}/warmup_response.json"
+  warmup_rc=$?
+  if [ "$warmup_rc" -ne 0 ]; then
+    printf '%s\n' "$warmup_rc" >"${cell_dir}/warmup_exit_code.txt"
+    suite_failed=1
+    continue
+  fi
+
+  reset_cell_state "${cell_dir}/reset_response.json"
+  reset_rc=$?
+  if [ "$reset_rc" -ne 0 ]; then
+    printf '%s\n' "$reset_rc" >"${cell_dir}/reset_after_warmup_exit_code.txt"
     suite_failed=1
     continue
   fi
