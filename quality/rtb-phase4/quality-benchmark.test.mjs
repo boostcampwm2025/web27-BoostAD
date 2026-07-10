@@ -2,6 +2,11 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildDataset } from './dataset.mjs';
 import { compareEvaluations, evaluateRankings } from './evaluate-rankings.mjs';
+import {
+  chunk,
+  toCampaignPayload,
+  toContentPayload,
+} from './run-ranking-extraction.mjs';
 
 test('dataset generation is deterministic and covers the intended matrix', () => {
   const first = buildDataset();
@@ -164,4 +169,30 @@ test('duplicate and unknown candidates make a ranking invalid', () => {
       error.includes('Unknown campaignKey')
     )
   );
+});
+
+test('ranking runner strips dataset-only fields from strict API payloads', () => {
+  const dataset = buildDataset();
+  const campaignPayload = toCampaignPayload(dataset.campaigns[0]);
+  const contentPayload = toContentPayload(dataset.contents[0]);
+
+  assert.deepEqual(Object.keys(campaignPayload), [
+    'campaignKey',
+    'title',
+    'content',
+    'tags',
+  ]);
+  assert.deepEqual(Object.keys(contentPayload), [
+    'contentId',
+    'title',
+    'body',
+    'tags',
+  ]);
+  assert.equal('theme' in campaignPayload, false);
+  assert.equal('split' in contentPayload, false);
+});
+
+test('ranking runner creates complete deterministic batches', () => {
+  assert.deepEqual(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
+  assert.throws(() => chunk([1], 0), /positive integer/);
 });

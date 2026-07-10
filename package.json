@@ -12,7 +12,8 @@
     "format:check": "prettier --check \"**/*.{js,jsx,ts,tsx,json,css,md}\"",
     "quality:phase4:generate": "node quality/rtb-phase4/generate-dataset.mjs",
     "quality:phase4:check": "node quality/rtb-phase4/generate-dataset.mjs --check",
-    "quality:phase4:test": "node --test quality/rtb-phase4/*.test.mjs"
+    "quality:phase4:test": "node --test quality/rtb-phase4/*.test.mjs",
+    "quality:phase4:extract": "node quality/rtb-phase4/run-ranking-extraction.mjs"
   },
   "repository": {
     "type": "git",
