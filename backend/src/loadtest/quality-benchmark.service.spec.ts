@@ -78,12 +78,14 @@ describe('QualityBenchmarkService', () => {
           }))
         )
       ),
-      searchCampaignDocumentVectors: jest.fn(async () =>
-        state.map((item) => ({
-          campaignId: item.id,
-          distance: 0,
-          similarity: 1,
-        }))
+      searchCampaignDocumentVectors: jest.fn(() =>
+        Promise.resolve(
+          state.map((item) => ({
+            campaignId: item.id,
+            distance: 0,
+            similarity: 1,
+          }))
+        )
       ),
       reserveFirstAvailable: jest.fn(),
     };

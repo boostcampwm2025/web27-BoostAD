@@ -58,26 +58,26 @@ describe('RedisCampaignCacheRepository winner-only reservation', () => {
     await expect(
       repository.updateCampaignEmbeddings('campaign-1', {
         modelVersion: 'other-model',
-        document: Array(384).fill(0),
-        tags: { react: Array(384).fill(0) },
+        document: Array<number>(384).fill(0),
+        tags: { react: Array<number>(384).fill(0) },
       })
     ).rejects.toThrow('campaign embedding model version 불일치');
   });
 
   it('uses a model-versioned document index for multilingual E5', async () => {
     const redis = {
-      call: jest.fn(async (command: string) => {
+      call: jest.fn((command: string) => {
         if (command === 'FT.INFO') {
-          throw new Error('Unknown index name');
+          return Promise.reject(new Error('Unknown index name'));
         }
         if (command === 'FT.SEARCH') {
-          return [
+          return Promise.resolve([
             1,
             'campaign-doc-vec:key',
             ['campaignId', 'campaign-1', 'vector_distance', '0.2'],
-          ];
+          ]);
         }
-        return 'OK';
+        return Promise.resolve('OK');
       }),
     } as unknown as AppIORedisClient & { call: jest.Mock };
     const config = {
@@ -96,7 +96,7 @@ describe('RedisCampaignCacheRepository winner-only reservation', () => {
 
     await expect(
       repository.searchCampaignDocumentVectors({
-        queryEmbedding: Array(384).fill(0),
+        queryEmbedding: Array<number>(384).fill(0),
         topL: 10,
         isHighIntent: false,
         nowTs: Date.now(),

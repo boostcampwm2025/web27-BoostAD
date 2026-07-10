@@ -19,10 +19,12 @@ describe('EmbeddingWorker lifecycle', () => {
       findCampaignCacheById: jest.Mock;
       updateCampaignEmbeddings: jest.Mock;
     };
-    const contextEmbeddingService = {
+    const contextEmbeddingServiceMock = {
       completeJob: jest.fn(),
       failJob: jest.fn(),
-    } as unknown as ContextEmbeddingService;
+    };
+    const contextEmbeddingService =
+      contextEmbeddingServiceMock as unknown as ContextEmbeddingService;
     const metricsService = {
       recordRtbContextJob: jest.fn(),
       observeRtbContextEmbeddingDuration: jest.fn(),
@@ -48,7 +50,7 @@ describe('EmbeddingWorker lifecycle', () => {
       bullWorker,
       mlEngine: mlEngine as unknown as { getEmbedding: jest.Mock },
       repository,
-      contextEmbeddingService,
+      contextEmbeddingService: contextEmbeddingServiceMock,
     };
   };
 
