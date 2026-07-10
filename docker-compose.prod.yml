@@ -38,6 +38,7 @@ services:
       RTB_ENABLE_ALL_LOGS: ${RTB_ENABLE_ALL_LOGS:-false}
       LOADTEST_RESET_ENABLED: ${LOADTEST_RESET_ENABLED:-false}
       LOADTEST_RESET_TOKEN: ${LOADTEST_RESET_TOKEN:-}
+      RTB_BUDGET_MODE: ${RTB_BUDGET_MODE:-legacy_topk}
     expose:
       - '3000'
     restart: unless-stopped

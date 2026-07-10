@@ -49,6 +49,7 @@ jq -n \
   --arg gitDiffSha "$git_diff_sha" \
   --arg corpusSha "$corpus_sha" \
   --arg corpusSeed "$corpus_seed" \
+  --arg budgetMode "${RTB_BUDGET_MODE:-winner_only}" \
   --argjson corpusSize "$corpus_size" \
   '{
     runId: $runId,
@@ -58,6 +59,7 @@ jq -n \
     matrix: $matrix,
     gitSha: $gitSha,
     gitDiffSha: $gitDiffSha,
+    budgetMode: $budgetMode,
     corpus: {sha256: $corpusSha, seed: $corpusSeed, size: $corpusSize},
     lifecycle: {
       restartBackendEachCell: false,

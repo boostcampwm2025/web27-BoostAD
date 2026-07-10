@@ -1,4 +1,6 @@
 import {
+  BudgetReservationCandidate,
+  BudgetReservationResult,
   CachedCampaign,
   CachedCampaignWithoutSpent,
   CampaignTagVectorSearchHit,
@@ -34,6 +36,10 @@ export abstract class CampaignCacheRepository {
     dailyBudget: number,
     totalBudget: number | null
   ): Promise<boolean>;
+
+  abstract reserveFirstAvailable(
+    candidates: BudgetReservationCandidate[]
+  ): Promise<BudgetReservationResult | null>;
 
   // Spent 롤백 (비딩 패배 시)
   // dailySpent -= cpc, totalSpent -= cpc

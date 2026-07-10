@@ -10,7 +10,6 @@ import { randomUUID } from 'crypto';
 import { CacheRepository } from '../cache/repository/cache.repository.interface';
 import { BidStatus } from '../bid-log/bid-log.types';
 import { CampaignCacheRepository } from '../campaign/repository/campaign.cache.repository.interface';
-import pLimit from 'p-limit';
 import { MetricsService } from '../metrics/metrics.service';
 import {
   createRtbPathLogger,
@@ -19,6 +18,9 @@ import {
 import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { BidLogJobData } from '../queue/types/queue.type';
+import { ConfigService } from '@nestjs/config';
+
+type BudgetMode = 'legacy_topk' | 'winner_only';
 
 @Injectable()
 export class RTBService {
@@ -26,9 +28,8 @@ export class RTBService {
   private readonly logsEnabled = rtbPathLogsEnabled();
   private readonly FALLBACK_CAMPAIGN_ID =
     'c1dda7a5-da58-416b-b8fa-20ba8f5535f9';
-  private readonly BATCH_LIMIT = 10;
-  private readonly limit = pLimit(this.BATCH_LIMIT);
   private readonly TOP_K = 10;
+  private readonly budgetMode: BudgetMode;
 
   constructor(
     private readonly matcher: Matcher,
@@ -37,8 +38,13 @@ export class RTBService {
     private readonly campaignCacheRepository: CampaignCacheRepository,
     private readonly metricsService: MetricsService,
     @InjectQueue('bidlog-queue')
-    private readonly bidlogQueue: Queue<BidLogJobData>
-  ) {}
+    private readonly bidlogQueue: Queue<BidLogJobData>,
+    private readonly configService: ConfigService
+  ) {
+    this.budgetMode = this.resolveBudgetMode(
+      this.configService.get<string>('RTB_BUDGET_MODE', 'legacy_topk')
+    );
+  }
 
   async runAuction(context: DecisionContext) {
     const totalStartedAt = process.hrtime.bigint();
@@ -99,24 +105,10 @@ export class RTBService {
         candidates.length
       );
 
-      // 2. 점수순으로 정렬한 뒤 top-k window 단위로 선제적 Spent 증가
-      candidates = await this.measureStage('reserve', () =>
-        this.reserveCandidatesByTopKWindow(candidates)
-      );
-
-      if (candidates.length === 0) {
-        throw new Error('예산 확보 가능한 캠페인이 없습니다');
-      }
-
-      // 4. 경매에 참여한 캠페인들에 대해 승자 도출, 전체결과 반환
-      const result = await this.measureStage('select', () =>
-        this.selector.selectWinner(candidates)
-      );
-
-      // 5. 패배한 캠페인들의 Spent 롤백
-      await this.measureStage('rollback', () =>
-        this.rollbackLosersSpent(auctionId, result)
-      );
+      const result =
+        this.budgetMode === 'winner_only'
+          ? await this.runWinnerOnlyReservation(candidates)
+          : await this.runLegacyTopKReservation(auctionId, candidates);
 
       // 6. AuctionStore에 경매 데이터 저장 (ViewLog에서 조회용)
       await this.measureStage('cache_auction', () =>
@@ -215,6 +207,45 @@ export class RTBService {
     }
   }
 
+  private async runWinnerOnlyReservation(
+    candidates: ScoredCandidate[]
+  ): Promise<SelectionResult> {
+    const ranked = await this.measureStage('select', () =>
+      this.selector.selectWinner(candidates)
+    );
+    const winner = await this.measureStage('reserve', () =>
+      this.reserveFirstRankedCandidate(ranked.candidates)
+    );
+
+    if (!winner) {
+      throw new Error('예산 확보 가능한 캠페인이 없습니다');
+    }
+
+    this.metricsService.observeRtbRollbackCandidateCount(0);
+    return { winner, candidates: [winner] };
+  }
+
+  private async runLegacyTopKReservation(
+    auctionId: string,
+    candidates: ScoredCandidate[]
+  ): Promise<SelectionResult> {
+    const reservedCandidates = await this.measureStage('reserve', () =>
+      this.reserveCandidatesByTopKWindow(candidates)
+    );
+
+    if (reservedCandidates.length === 0) {
+      throw new Error('예산 확보 가능한 캠페인이 없습니다');
+    }
+
+    const result = await this.measureStage('select', () =>
+      this.selector.selectWinner(reservedCandidates)
+    );
+    await this.measureStage('rollback', () =>
+      this.rollbackLosersSpent(auctionId, result)
+    );
+    return result;
+  }
+
   private async rollbackLosersSpent(
     auctionId: string,
     result: SelectionResult
@@ -224,44 +255,42 @@ export class RTBService {
     );
     this.metricsService.observeRtbRollbackCandidateCount(losers.length);
 
-    // 병렬 처리 - p-limit 사용
+    // legacy top-K window는 최대 10개이므로 window 내부에서 병렬 처리
     await Promise.allSettled(
-      losers.map((loser) =>
-        this.limit(async () => {
-          const dependencyStartedAt = process.hrtime.bigint();
+      losers.map(async (loser) => {
+        const dependencyStartedAt = process.hrtime.bigint();
 
-          try {
-            await this.campaignCacheRepository.decrementSpent(
-              loser.id,
-              loser.maxCpc
+        try {
+          await this.campaignCacheRepository.decrementSpent(
+            loser.id,
+            loser.maxCpc
+          );
+          this.metricsService.recordDependency(
+            'redis',
+            'decrement_spent',
+            'ok',
+            this.elapsedMs(dependencyStartedAt)
+          );
+          if (this.logsEnabled) {
+            this.logger.debug(
+              `Auction ${auctionId}: 패배 캠페인 ${loser.id} Spent 롤백 완료`
             );
-            this.metricsService.recordDependency(
-              'redis',
-              'decrement_spent',
-              'ok',
-              this.elapsedMs(dependencyStartedAt)
-            );
-            if (this.logsEnabled) {
-              this.logger.debug(
-                `Auction ${auctionId}: 패배 캠페인 ${loser.id} Spent 롤백 완료`
-              );
-            }
-          } catch (error) {
-            this.metricsService.recordDependency(
-              'redis',
-              'decrement_spent',
-              'error',
-              this.elapsedMs(dependencyStartedAt)
-            );
-            if (this.logsEnabled) {
-              this.logger.warn(
-                `Auction ${auctionId}: 패배 캠페인 ${loser.id} Spent 롤백 실패`,
-                error
-              );
-            }
           }
-        })
-      )
+        } catch (error) {
+          this.metricsService.recordDependency(
+            'redis',
+            'decrement_spent',
+            'error',
+            this.elapsedMs(dependencyStartedAt)
+          );
+          if (this.logsEnabled) {
+            this.logger.warn(
+              `Auction ${auctionId}: 패배 캠페인 ${loser.id} Spent 롤백 실패`,
+              error
+            );
+          }
+        }
+      })
     );
   }
   /**
@@ -273,37 +302,107 @@ export class RTBService {
     const eligibleCandidates: ScoredCandidate[] = [];
 
     await Promise.allSettled(
-      candidates.map((candidate) =>
-        this.limit(async () => {
-          const { id, maxCpc, dailyBudget, totalBudget } = candidate;
-          const dependencyStartedAt = process.hrtime.bigint();
-          const reserved = await this.campaignCacheRepository.incrementSpent(
-            id,
-            maxCpc,
-            dailyBudget,
-            totalBudget
-          );
+      candidates.map(async (candidate) => {
+        const { id, maxCpc, dailyBudget, totalBudget } = candidate;
+        const dependencyStartedAt = process.hrtime.bigint();
+        const reserved = await this.campaignCacheRepository.incrementSpent(
+          id,
+          maxCpc,
+          dailyBudget,
+          totalBudget
+        );
 
-          this.metricsService.recordDependency(
-            'redis',
-            'increment_spent',
-            reserved ? 'ok' : 'rejected',
-            this.elapsedMs(dependencyStartedAt)
-          );
+        this.metricsService.recordDependency(
+          'redis',
+          'increment_spent',
+          reserved ? 'ok' : 'rejected',
+          this.elapsedMs(dependencyStartedAt)
+        );
 
-          if (reserved) {
-            eligibleCandidates.push(candidate);
-          } else {
-            this.metricsService.incRtbReservationFailure('rejected');
-            if (this.logsEnabled) {
-              this.logger.debug(`캠페인 ${id} 예산 확보 실패 - 후보에서 제외`);
-            }
+        if (reserved) {
+          eligibleCandidates.push(candidate);
+        } else {
+          this.metricsService.incRtbReservationFailure('rejected');
+          if (this.logsEnabled) {
+            this.logger.debug(`캠페인 ${id} 예산 확보 실패 - 후보에서 제외`);
           }
-        })
-      )
+        }
+      })
     );
 
     return eligibleCandidates;
+  }
+
+  private async reserveFirstRankedCandidate(
+    rankedCandidates: ScoredCandidate[]
+  ): Promise<ScoredCandidate | null> {
+    let attemptedCandidateCount = 0;
+    let attemptedWindowCount = 0;
+
+    for (let start = 0; start < rankedCandidates.length; start += this.TOP_K) {
+      attemptedWindowCount += 1;
+      const window = rankedCandidates.slice(start, start + this.TOP_K);
+      const dependencyStartedAt = process.hrtime.bigint();
+      const reserved = await this.campaignCacheRepository.reserveFirstAvailable(
+        window.map((candidate) => ({
+          campaignId: candidate.id,
+          cpc: candidate.maxCpc,
+        }))
+      );
+      const checkedInWindow = reserved?.attemptedCount ?? window.length;
+      attemptedCandidateCount += checkedInWindow;
+
+      this.metricsService.recordDependency(
+        'redis',
+        'reserve_first_available',
+        reserved ? 'ok' : 'rejected',
+        this.elapsedMs(dependencyStartedAt)
+      );
+      this.metricsService.incRtbReservationFailure(
+        'rejected',
+        reserved ? Math.max(0, checkedInWindow - 1) : checkedInWindow
+      );
+
+      if (reserved) {
+        const winner = window.find(
+          (candidate) => candidate.id === reserved.campaignId
+        );
+        if (!winner) {
+          throw new Error(
+            'winner-only 예약 결과가 후보 window와 일치하지 않습니다'
+          );
+        }
+        this.recordWinnerOnlyFanout(
+          attemptedWindowCount,
+          attemptedCandidateCount,
+          1
+        );
+        return winner;
+      }
+    }
+
+    this.recordWinnerOnlyFanout(
+      attemptedWindowCount,
+      attemptedCandidateCount,
+      0
+    );
+    return null;
+  }
+
+  private recordWinnerOnlyFanout(
+    attemptedWindowCount: number,
+    attemptedCandidateCount: number,
+    reservedCandidateCount: 0 | 1
+  ): void {
+    this.metricsService.observeRtbReserveWindowAttemptCount(
+      attemptedWindowCount
+    );
+    this.metricsService.observeRtbReserveAttemptCandidateCount(
+      attemptedCandidateCount
+    );
+    this.metricsService.observeRtbReservedCandidateCount(
+      reservedCandidateCount
+    );
   }
 
   private elapsedMs(startedAt: bigint): number {
@@ -435,4 +534,16 @@ export class RTBService {
   //     return true;
   //   });
   // }
+
+  private resolveBudgetMode(configuredMode: string | undefined): BudgetMode {
+    if (configuredMode === 'winner_only') {
+      return 'winner_only';
+    }
+    if (configuredMode && configuredMode !== 'legacy_topk') {
+      this.logger.warn(
+        `지원하지 않는 RTB_BUDGET_MODE=${configuredMode}; legacy_topk를 사용합니다.`
+      );
+    }
+    return 'legacy_topk';
+  }
 }

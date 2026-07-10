@@ -289,8 +289,11 @@ export class MetricsService {
     this.rtbFallbackTotal.inc({ reason });
   }
 
-  incRtbReservationFailure(reason: string) {
-    this.rtbReservationFailuresTotal.inc({ reason });
+  incRtbReservationFailure(reason: string, count = 1) {
+    if (count <= 0) {
+      return;
+    }
+    this.rtbReservationFailuresTotal.inc({ reason }, count);
   }
 
   observeRtbPayload(direction: 'request' | 'response', bytes: number) {

@@ -4,6 +4,8 @@ import { IOREDIS_CLIENT } from 'src/redis/redis.constant';
 import type { AppIORedisClient } from 'src/redis/redis.type';
 import { CampaignCacheRepository } from './campaign.cache.repository.interface';
 import {
+  BudgetReservationCandidate,
+  BudgetReservationResult,
   CachedCampaign,
   CachedCampaignWithoutSpent,
   CampaignTagVectorSearchHit,
@@ -12,6 +14,7 @@ import {
 import {
   REDIS_DECREMENT_SPENT_SCRIPT,
   REDIS_INCREMENT_SPENT_SCRIPT,
+  REDIS_RESERVE_FIRST_AVAILABLE_SCRIPT,
 } from '../scripts/lua-script';
 import {
   createRtbPathLogger,
@@ -50,10 +53,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     @Inject(IOREDIS_CLIENT) private readonly ioredisClient: AppIORedisClient,
     private readonly configService: ConfigService
   ) {
-    this.hnswGraphDegree = this.getPositiveIntEnv(
-      'RTB_MATCHER_ANN_HNSW_M',
-      16
-    );
+    this.hnswGraphDegree = this.getPositiveIntEnv('RTB_MATCHER_ANN_HNSW_M', 16);
     this.hnswEfConstruction = this.getPositiveIntEnv(
       'RTB_MATCHER_ANN_HNSW_EF_CONSTRUCTION',
       200
@@ -295,6 +295,42 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     }
   }
 
+  async reserveFirstAvailable(
+    candidates: BudgetReservationCandidate[]
+  ): Promise<BudgetReservationResult | null> {
+    if (candidates.length === 0) {
+      return null;
+    }
+
+    const keys = candidates.map((candidate) =>
+      this.getCampaignCacheKey(candidate.campaignId)
+    );
+    const cpcs = candidates.map((candidate) => String(candidate.cpc));
+
+    try {
+      const result = (await this.ioredisClient.eval(
+        REDIS_RESERVE_FIRST_AVAILABLE_SCRIPT,
+        keys.length,
+        ...keys,
+        ...cpcs
+      )) as [number, number];
+      const selectedIndex = Number(result?.[0] ?? 0);
+      const attemptedCount = Number(result?.[1] ?? candidates.length);
+
+      if (selectedIndex <= 0 || selectedIndex > candidates.length) {
+        return null;
+      }
+
+      return {
+        campaignId: candidates[selectedIndex - 1].campaignId,
+        attemptedCount,
+      };
+    } catch (error) {
+      this.logger.error('순위 window winner-only 예약 실패', error);
+      return null;
+    }
+  }
+
   async decrementSpent(campaignId: string, cpc: number): Promise<void> {
     const key = this.getCampaignCacheKey(campaignId);
 
@@ -390,7 +426,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       `=>[KNN ${topL} @embedding $query_vec AS vector_distance]`;
 
     try {
-      const raw = (await this.ioredisClient.call(
+      const raw = await this.ioredisClient.call(
         'FT.SEARCH',
         this.CAMPAIGN_TAG_VECTOR_INDEX,
         query,
@@ -411,7 +447,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
         String(topL),
         'DIALECT',
         '2'
-      )) as unknown;
+      );
 
       return this.parseCampaignTagVectorSearchResults(raw);
     } catch (error) {
@@ -457,7 +493,10 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     return `${this.KEY_PREFIX}${id}`;
   }
 
-  private getCampaignTagVectorDocKey(campaignId: string, tagName: string): string {
+  private getCampaignTagVectorDocKey(
+    campaignId: string,
+    tagName: string
+  ): string {
     return `${this.CAMPAIGN_TAG_VECTOR_PREFIX}${campaignId}:${encodeURIComponent(tagName)}`;
   }
 
@@ -546,7 +585,9 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     return this.campaignTagVectorIndexReady;
   }
 
-  private async syncCampaignTagVectorDocs(campaign: CachedCampaign): Promise<void> {
+  private async syncCampaignTagVectorDocs(
+    campaign: CachedCampaign
+  ): Promise<void> {
     if (
       !campaign.tags ||
       campaign.tags.length === 0 ||
@@ -623,17 +664,19 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       return [];
     }
 
+    const entries: unknown[] = raw;
     const hits: CampaignTagVectorSearchHit[] = [];
-    for (let i = 1; i < raw.length; i += 2) {
-      const fields = raw[i + 1];
+    for (let i = 1; i < entries.length; i += 2) {
+      const fields = entries[i + 1];
       if (!Array.isArray(fields)) {
         continue;
       }
 
+      const fieldEntries: unknown[] = fields;
       const fieldMap = new Map<string, string>();
-      for (let j = 0; j < fields.length; j += 2) {
-        const key = fields[j];
-        const value = fields[j + 1];
+      for (let j = 0; j < fieldEntries.length; j += 2) {
+        const key = fieldEntries[j];
+        const value = fieldEntries[j + 1];
         if (typeof key !== 'string') {
           continue;
         }

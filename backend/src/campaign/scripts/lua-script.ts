@@ -47,6 +47,40 @@ export const REDIS_INCREMENT_SPENT_SCRIPT = `
     return 1  -- 성공
   `;
 
+// 순위가 확정된 후보 window에서 첫 예산 가능 후보 1개만 원자적으로 선점
+// KEYS[i] = campaign:{id}
+// ARGV[i] = 해당 후보의 cpc
+// 반환값 = {성공한 1-based index(없으면 0), 실제 검사한 후보 수}
+export const REDIS_RESERVE_FIRST_AVAILABLE_SCRIPT = `
+  for i = 1, #KEYS do
+    local campaignKey = KEYS[i]
+    local cpc = tonumber(ARGV[i])
+    local statusRaw = redis.call('JSON.GET', campaignKey, '$.status')
+    local dailyBudgetRaw = redis.call('JSON.GET', campaignKey, '$.dailyBudget')
+    local totalBudgetRaw = redis.call('JSON.GET', campaignKey, '$.totalBudget')
+    local dailySpentRaw = redis.call('JSON.GET', campaignKey, '$.dailySpent')
+    local totalSpentRaw = redis.call('JSON.GET', campaignKey, '$.totalSpent')
+
+    if statusRaw and string.find(statusRaw, 'ACTIVE', 1, true)
+      and dailyBudgetRaw and totalBudgetRaw and dailySpentRaw and totalSpentRaw then
+      local dailyBudget = tonumber(string.match(dailyBudgetRaw, '%[([%d%.]+)%]'))
+      local dailySpent = tonumber(string.match(dailySpentRaw, '%[([%d%.]+)%]')) or 0
+      local totalSpent = tonumber(string.match(totalSpentRaw, '%[([%d%.]+)%]')) or 0
+      local totalBudget = tonumber(string.match(totalBudgetRaw, '%[([%d%.]+)%]'))
+      local dailyEligible = dailyBudget and dailySpent + cpc <= dailyBudget
+      local totalEligible = not totalBudget or totalSpent + cpc <= totalBudget
+
+      if dailyEligible and totalEligible then
+        redis.call('JSON.NUMINCRBY', campaignKey, '$.dailySpent', cpc)
+        redis.call('JSON.NUMINCRBY', campaignKey, '$.totalSpent', cpc)
+        return {i, i}
+      end
+    end
+  end
+
+  return {0, #KEYS}
+`;
+
 // Lua Script: 원자적 Spent 감소 (롤백용)
 // KEYS[1] = campaign:{id}
 // ARGV[1] = cpc (감소할 금액, 양수로 전달)

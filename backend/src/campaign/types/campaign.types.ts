@@ -88,3 +88,13 @@ export type CampaignTagVectorSearchHit = {
   distance: number;
   similarity: number;
 };
+
+export type BudgetReservationCandidate = {
+  campaignId: string;
+  cpc: number;
+};
+
+export type BudgetReservationResult = {
+  campaignId: string;
+  attemptedCount: number;
+};

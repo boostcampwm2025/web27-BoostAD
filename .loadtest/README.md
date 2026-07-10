@@ -57,6 +57,7 @@ make k6-local-reset SCRIPT=k6/http/rtb-decision.js
 - 특정 캠페인만 초기화하려면 `RESET_CAMPAIGN_IDS=campaign-a,campaign-b` 형태로 지정하세요.
 - RTB suite는 각 cell을 백엔드 재시작으로 격리하지 않고 reset API로 DB/Redis spent, 로그, 보조 키, queue 상태를 초기화합니다.
 - 분석 결과의 `budgetPressureObserved`는 reset 실패가 아니라 해당 cell 실행 중 reservation rejection이 발생했다는 뜻입니다.
+- `RTB_BUDGET_MODE=winner_only`는 순위가 확정된 후보를 10개 window 단위 Lua로 검사해 첫 성공 후보 1개만 예약합니다. 긴급 롤백은 `legacy_topk`를 사용합니다.
 
 ### 배포 서버(프로덕션/스테이징)
 
