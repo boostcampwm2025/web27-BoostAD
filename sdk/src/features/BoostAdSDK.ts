@@ -23,6 +23,8 @@ export class BoostAdSDK {
   private mutationObserver: MutationObserver | null = null;
   private renderedZones = new Set<Element>(); // SPA 라우팅 대응: 이미 렌더링된 zone 추적
   private debounceTimer: ReturnType<typeof setTimeout> | null = null; // DOM 변화 감지 디바운스
+  private contextId: string | undefined;
+  private contextUrl: string | undefined;
   private readonly CONTENT_SELECTORS = [
     '#article',
     '#area_view',
@@ -71,7 +73,8 @@ export class BoostAdSDK {
         tags,
         postUrl,
         behaviorScore,
-        isHighIntent
+        isHighIntent,
+        this.contextId
       );
 
       // 광고 후보가 없는 경우 처리 (아무것도 표시하지 않음)
@@ -113,6 +116,7 @@ export class BoostAdSDK {
 
     const tags = this.tagExtractor.extract();
     const postUrl = window.location.href;
+    await this.ensureContextObserved(tags, postUrl);
 
     // 1차 광고: 본문 상단에 삽입
     const firstAdContainer = this.createAdContainer('boostad-first-ad');
@@ -220,6 +224,36 @@ export class BoostAdSDK {
       if (contentArea) {
         const firstElement = contentArea.querySelector('p, h2');
         if (firstElement) return firstElement;
+      }
+    }
+    return null;
+  }
+
+  private async ensureContextObserved(
+    tags: Tag[],
+    postUrl: string
+  ): Promise<void> {
+    if (this.contextUrl === postUrl) {
+      return;
+    }
+    this.contextUrl = postUrl;
+    const contentArea = this.findContentArea();
+    const title =
+      document.querySelector('h1')?.textContent?.trim() || document.title;
+    const body = contentArea?.textContent?.trim();
+    this.contextId = await this.apiClient.observeContext(
+      tags,
+      postUrl,
+      title,
+      body
+    );
+  }
+
+  private findContentArea(): Element | null {
+    for (const selector of this.CONTENT_SELECTORS) {
+      const contentArea = document.querySelector(selector);
+      if (contentArea) {
+        return contentArea;
       }
     }
     return null;
@@ -339,6 +373,7 @@ export class BoostAdSDK {
 
     const tags = this.tagExtractor.extract();
     const postUrl = window.location.href;
+    await this.ensureContextObserved(tags, postUrl);
 
     // 각 광고존에 광고 삽입 (수동 모드는 행동 추적 없이 광고만 표시)
     for (const zone of limitedZones) {

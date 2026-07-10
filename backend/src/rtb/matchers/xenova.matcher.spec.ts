@@ -6,6 +6,7 @@ import { TransformerMatcher } from './xenova.matcher';
 import { CampaignCacheRepository } from '../../campaign/repository/campaign.cache.repository.interface';
 import type { CachedCampaign } from '../../campaign/types/campaign.types';
 import { CampaignServingSnapshotService } from '../../campaign/campaign-serving-snapshot.service';
+import { ContextEmbeddingService } from '../context/context-embedding.service';
 
 describe('TransformerMatcher ANN path', () => {
   const now = new Date('2026-03-29T00:00:00.000Z');
@@ -57,6 +58,7 @@ describe('TransformerMatcher ANN path', () => {
       incRtbEmbeddingSource: jest.fn(),
       recordRtbEmbeddingBackground: jest.fn(),
       recordRtbLexicalFallback: jest.fn(),
+      recordRtbContextDecision: jest.fn(),
     }) as unknown as MetricsService;
 
   const buildConfigService = (overrides?: Record<string, string>) =>
@@ -102,13 +104,17 @@ describe('TransformerMatcher ANN path', () => {
     snapshot: CampaignServingSnapshotService,
     mlEngine: MLEngine,
     metrics: MetricsService,
-    config: ConfigService
+    config: ConfigService,
+    contextEmbeddingService = {
+      resolveForDecision: jest.fn().mockResolvedValue({ status: 'MISS' }),
+    } as unknown as ContextEmbeddingService
   ) =>
     new TransformerMatcher(
       repository,
       snapshot,
       mlEngine,
       buildEmbeddingCache(mlEngine, metrics, config),
+      contextEmbeddingService,
       metrics,
       config
     );
@@ -432,6 +438,114 @@ describe('TransformerMatcher ANN path', () => {
     };
     expect(metricsMock.recordRtbLexicalFallback).toHaveBeenCalledWith(
       'model_not_ready',
+      1
+    );
+  });
+
+  it('3D-M1: READY context embedding becomes the ANN query vector', async () => {
+    const campaign = buildCampaign('c1', ['react'], { react: [0, 1] });
+    const repository = buildRepository([campaign]);
+    repository.searchCampaignTagVectors.mockResolvedValue([
+      {
+        campaignId: 'c1',
+        tagName: 'react',
+        distance: 0.01,
+        similarity: 0.99,
+      },
+    ]);
+    const metrics = buildMetricsService();
+    const contextEmbeddingService = {
+      resolveForDecision: jest
+        .fn()
+        .mockResolvedValue({ status: 'READY', embedding: [0, 1] }),
+    } as unknown as ContextEmbeddingService;
+    const mlEngine = buildMlEngine() as unknown as {
+      getEmbedding: jest.Mock;
+    };
+    const matcher = buildMatcher(
+      repository,
+      buildSnapshot([campaign]),
+      mlEngine as unknown as MLEngine,
+      metrics,
+      buildConfigService({
+        RTB_MATCHER_ANN_ENABLED: 'true',
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_CONTEXT_DECISION_ENABLED: 'true',
+      }),
+      contextEmbeddingService
+    );
+
+    const candidates = await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['react'],
+      contextId: `ctx_${'a'.repeat(64)}`,
+      postUrl: 'https://example.com/post',
+      behaviorScore: 20,
+      isHighIntent: false,
+    });
+
+    expect(candidates.map((candidate) => candidate.id)).toEqual(['c1']);
+    expect(repository.searchCampaignTagVectors).toHaveBeenCalledWith(
+      expect.objectContaining({ queryEmbedding: [0, 1] })
+    );
+    expect(mlEngine.getEmbedding).not.toHaveBeenCalled();
+    const metricsMock = metrics as unknown as {
+      recordRtbContextDecision: jest.Mock;
+      incRtbEmbeddingSource: jest.Mock;
+    };
+    expect(metricsMock.recordRtbContextDecision).toHaveBeenCalledWith('READY');
+    expect(metricsMock.incRtbEmbeddingSource).toHaveBeenCalledWith('context');
+  });
+
+  it('3D-M2: PENDING context falls back to lexical candidates', async () => {
+    const campaign = buildCampaign('c1', ['react'], {});
+    const repository = buildRepository([campaign]);
+    const metrics = buildMetricsService();
+    const contextEmbeddingService = {
+      resolveForDecision: jest.fn().mockResolvedValue({ status: 'PENDING' }),
+    } as unknown as ContextEmbeddingService;
+    const mlEngine = buildMlEngine() as unknown as {
+      getEmbedding: jest.Mock;
+    };
+    const matcher = buildMatcher(
+      repository,
+      buildSnapshot([campaign]),
+      mlEngine as unknown as MLEngine,
+      metrics,
+      buildConfigService({
+        RTB_MATCHER_ANN_ENABLED: 'true',
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_EMBEDDING_COLD_MISS_FAST_PATH_ENABLED: 'true',
+        RTB_CONTEXT_DECISION_ENABLED: 'true',
+      }),
+      contextEmbeddingService
+    );
+
+    const candidates = await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['react'],
+      contextId: `ctx_${'b'.repeat(64)}`,
+      postUrl: 'https://example.com/post',
+      behaviorScore: 20,
+      isHighIntent: false,
+    });
+
+    expect(candidates.map((candidate) => candidate.id)).toEqual(['c1']);
+    expect(repository.searchCampaignTagVectors).not.toHaveBeenCalled();
+    expect(mlEngine.getEmbedding).not.toHaveBeenCalled();
+    const metricsMock = metrics as unknown as {
+      recordRtbContextDecision: jest.Mock;
+      recordRtbLexicalFallback: jest.Mock;
+    };
+    expect(metricsMock.recordRtbContextDecision).toHaveBeenCalledWith(
+      'PENDING'
+    );
+    expect(metricsMock.recordRtbLexicalFallback).toHaveBeenCalledWith(
+      'context_pending',
       1
     );
   });

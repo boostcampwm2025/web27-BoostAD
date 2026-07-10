@@ -9,6 +9,7 @@ import {
 import { MLEngine } from '../ml/mlEngine.interface';
 import { RequestEmbeddingCacheService } from '../ml/request-embedding-cache.service';
 import type { EmbeddingPendingReason } from '../ml/request-embedding-cache.service';
+import { ContextEmbeddingService } from '../context/context-embedding.service';
 import type { DecisionContext, ScoredCandidate } from '../types/decision.types';
 import type { CachedCampaign } from '../../campaign/types/campaign.types';
 import { MetricsService } from '../../metrics/metrics.service';
@@ -56,12 +57,14 @@ export class TransformerMatcher extends Matcher {
   private readonly localSnapshotEnabled: boolean;
   private readonly coldMissFastPathEnabled: boolean;
   private readonly lexicalTopM: number;
+  private readonly contextDecisionEnabled: boolean;
 
   constructor(
     private readonly campaignCacheRepo: CampaignCacheRepository,
     private readonly campaignServingSnapshot: CampaignServingSnapshotService,
     private readonly mlEngine: MLEngine,
     private readonly requestEmbeddingCache: RequestEmbeddingCacheService,
+    private readonly contextEmbeddingService: ContextEmbeddingService,
     private readonly metricsService: MetricsService,
     private readonly configService: ConfigService
   ) {
@@ -91,6 +94,12 @@ export class TransformerMatcher extends Matcher {
         'false'
       ) === 'true';
     this.lexicalTopM = this.getPositiveIntEnv('RTB_LEXICAL_TOP_M', 30);
+    this.contextDecisionEnabled =
+      this.localSnapshotEnabled &&
+      this.configService.get<string>(
+        'RTB_CONTEXT_DECISION_ENABLED',
+        'false'
+      ) === 'true';
   }
 
   /**
@@ -119,7 +128,26 @@ export class TransformerMatcher extends Matcher {
     let requestEmbedding: number[];
     const requestEmbeddingStartedAt = process.hrtime.bigint();
     try {
-      if (this.coldMissFastPathEnabled) {
+      if (this.contextDecisionEnabled && context.contextId) {
+        const contextResult =
+          await this.contextEmbeddingService.resolveForDecision(
+            context.contextId
+          );
+        this.metricsService.recordRtbContextDecision(contextResult.status);
+        if (contextResult.status !== 'READY') {
+          this.metricsService.recordRtbStage(
+            'match_request_embedding',
+            'fallback',
+            this.elapsedMs(requestEmbeddingStartedAt)
+          );
+          return this.findCandidatesByLexicalFallback(
+            context,
+            `context_${contextResult.status.toLowerCase()}`
+          );
+        }
+        requestEmbedding = contextResult.embedding;
+        this.metricsService.incRtbEmbeddingSource('context');
+      } else if (this.coldMissFastPathEnabled) {
         const resolved =
           await this.requestEmbeddingCache.resolveCachedOrSchedule(requestText);
         if (resolved.status === 'pending') {
@@ -216,7 +244,11 @@ export class TransformerMatcher extends Matcher {
 
   private async findCandidatesByLexicalFallback(
     context: DecisionContext,
-    reason: EmbeddingPendingReason | 'model_not_ready' | 'cache_error'
+    reason:
+      | EmbeddingPendingReason
+      | 'model_not_ready'
+      | 'cache_error'
+      | `context_${string}`
   ): Promise<ScoredCandidate[]> {
     const startedAt = process.hrtime.bigint();
     const requestTags = new Set(

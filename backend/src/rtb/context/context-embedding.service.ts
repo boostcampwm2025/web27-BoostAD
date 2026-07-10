@@ -27,12 +27,19 @@ export type ContextObserveInput = {
   tags: string[];
 };
 
+export type ContextDecisionResult =
+  | { status: 'READY'; embedding: number[] }
+  | { status: 'PENDING' | 'FAILED' | 'MISS' | 'TIMEOUT' | 'ERROR' };
+
+class ContextLookupTimeoutError extends Error {}
+
 @Injectable()
 export class ContextEmbeddingService {
   private readonly maxBodyChars: number;
   private readonly readyTtlSeconds: number;
   private readonly pendingTtlSeconds: number;
   private readonly jobLockTtlSeconds: number;
+  private readonly lookupBudgetMs: number;
 
   constructor(
     private readonly mlEngine: MLEngine,
@@ -57,6 +64,10 @@ export class ContextEmbeddingService {
     this.jobLockTtlSeconds = this.getPositiveInt(
       'RTB_CONTEXT_JOB_LOCK_TTL_SECONDS',
       10 * 60
+    );
+    this.lookupBudgetMs = this.getPositiveInt(
+      'RTB_CONTEXT_LOOKUP_BUDGET_MS',
+      5
     );
   }
 
@@ -152,6 +163,40 @@ export class ContextEmbeddingService {
     return this.readState(
       this.buildStateKey(this.mlEngine.getModelVersion(), contentHash)
     );
+  }
+
+  async resolveForDecision(contextId: string): Promise<ContextDecisionResult> {
+    const contentHash = this.parseContextId(contextId);
+    if (!contentHash) {
+      return { status: 'MISS' };
+    }
+
+    try {
+      const state = await this.withLookupTimeout(
+        this.readState(
+          this.buildStateKey(this.mlEngine.getModelVersion(), contentHash)
+        )
+      );
+      if (!state) {
+        return { status: 'MISS' };
+      }
+      if (state.status !== 'READY') {
+        return { status: state.status };
+      }
+      if (
+        !state.embedding ||
+        state.embedding.length !== this.mlEngine.getEmbeddingDimension() ||
+        state.embedding.some((value) => !Number.isFinite(value))
+      ) {
+        return { status: 'ERROR' };
+      }
+      return { status: 'READY', embedding: state.embedding };
+    } catch (error) {
+      return {
+        status:
+          error instanceof ContextLookupTimeoutError ? 'TIMEOUT' : 'ERROR',
+      };
+    }
   }
 
   async completeJob(
@@ -293,6 +338,25 @@ export class ContextEmbeddingService {
     ttlSeconds: number
   ): Promise<void> {
     await this.redis.set(key, JSON.stringify(state), 'EX', ttlSeconds);
+  }
+
+  private withLookupTimeout<T>(promise: Promise<T>): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new ContextLookupTimeoutError()),
+        this.lookupBudgetMs
+      );
+      promise.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error) => {
+          clearTimeout(timer);
+          reject(error);
+        }
+      );
+    });
   }
 
   private getPositiveInt(key: string, fallback: number): number {

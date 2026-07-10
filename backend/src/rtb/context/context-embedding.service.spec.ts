@@ -91,6 +91,12 @@ describe('ContextEmbeddingService', () => {
       contextId: pending.contextId,
       embedding: [0.1, 0.2, 0.3],
     });
+    await expect(
+      service.resolveForDecision(pending.contextId)
+    ).resolves.toEqual({
+      status: 'READY',
+      embedding: [0.1, 0.2, 0.3],
+    });
     const repeated = await service.observe({
       title: 'title',
       body: 'body',
@@ -125,5 +131,16 @@ describe('ContextEmbeddingService', () => {
     expect(second.contextId).toBe(first.contextId);
     expect(v1.queue.add).toHaveBeenCalledTimes(1);
     expect(v2.queue.add).toHaveBeenCalledTimes(1);
+  });
+
+  it('3D-U1: unknown or malformed context IDs resolve as MISS', async () => {
+    const { service } = buildHarness();
+
+    await expect(service.resolveForDecision('invalid')).resolves.toEqual({
+      status: 'MISS',
+    });
+    await expect(
+      service.resolveForDecision(`ctx_${'f'.repeat(64)}`)
+    ).resolves.toEqual({ status: 'MISS' });
   });
 });

@@ -28,6 +28,22 @@ export interface DecisionRequest {
   postUrl: string;
   behaviorScore: number;
   isHighIntent: boolean;
+  contextId?: string;
+}
+
+export interface ContextObserveRequest {
+  blogKey: string;
+  postUrl: string;
+  title?: string;
+  body?: string;
+  tags: string[];
+}
+
+export interface ContextObserveResponse {
+  status: 'READY' | 'PENDING' | 'FAILED';
+  contextId: string;
+  contentHash: string;
+  timestamp: string;
 }
 
 // Decision API 응답 타입
@@ -96,8 +112,15 @@ export interface APIClient {
     tags: Tag[],
     postUrl: string,
     behaviorScore?: number,
-    isHighIntent?: boolean
+    isHighIntent?: boolean,
+    contextId?: string
   ): Promise<DecisionResponse>;
+  observeContext(
+    tags: Tag[],
+    postUrl: string,
+    title?: string,
+    body?: string
+  ): Promise<string | undefined>;
 }
 
 export interface AdRenderer {

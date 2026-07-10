@@ -201,6 +201,13 @@ const result = {
           'source',
           'fallback'
         ),
+        context: counterDeltaByLabel(
+          before,
+          after,
+          'boostad_rtb_embedding_source_total',
+          'source',
+          'context'
+        ),
       },
       background: {
         scheduled: counterDeltaByLabel(
@@ -309,6 +316,20 @@ const result = {
           before,
           after,
           'boostad_rtb_context_embedding_duration_seconds'
+        ),
+        decision: Object.fromEntries(
+          ['READY', 'PENDING', 'FAILED', 'MISS', 'TIMEOUT', 'ERROR'].map(
+            (status) => [
+              status,
+              counterDeltaByLabel(
+                before,
+                after,
+                'boostad_rtb_context_decision_total',
+                'status',
+                status
+              ),
+            ]
+          )
         ),
       },
     },

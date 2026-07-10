@@ -23,6 +23,7 @@ export interface DecisionContext {
   blogId: number; // Guard에서 가져온 값 (중복 조회 방지)
   blogName: string; // Guard에서 가져온 값 (SSE 이벤트 DB 조회 제거용)
   tags: string[];
+  contextId?: string;
   postUrl: string;
   behaviorScore: number;
   isHighIntent: boolean;

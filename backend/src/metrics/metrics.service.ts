@@ -24,6 +24,7 @@ type EmbeddingBackgroundLabel = 'result';
 type LexicalFallbackLabel = 'reason';
 type ContextObserveLabel = 'status';
 type ContextJobLabel = 'result';
+type ContextDecisionLabel = 'status';
 
 @Injectable()
 export class MetricsService {
@@ -262,6 +263,13 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private readonly rtbContextDecisionTotal = new Counter<ContextDecisionLabel>({
+    name: 'boostad_rtb_context_decision_total',
+    help: 'Context state used by RTB decision',
+    labelNames: ['status'],
+    registers: [this.registry],
+  });
+
   private readonly rtbReservationFailuresTotal =
     new Counter<RtbReservationFailureLabel>({
       name: 'boostad_rtb_reservation_failures_total',
@@ -460,7 +468,9 @@ export class MetricsService {
     if (count > 0) this.rtbEmbeddingRuntimeTotal.inc(count);
   }
 
-  incRtbEmbeddingSource(source: 'tag-L1' | 'tag-L2' | 'runtime' | 'fallback') {
+  incRtbEmbeddingSource(
+    source: 'tag-L1' | 'tag-L2' | 'runtime' | 'fallback' | 'context'
+  ) {
     this.rtbEmbeddingSourceTotal.inc({ source });
   }
 
@@ -491,6 +501,12 @@ export class MetricsService {
     if (Number.isFinite(seconds) && seconds >= 0) {
       this.rtbContextEmbeddingDurationSeconds.observe(seconds);
     }
+  }
+
+  recordRtbContextDecision(
+    status: 'READY' | 'PENDING' | 'FAILED' | 'MISS' | 'TIMEOUT' | 'ERROR'
+  ) {
+    this.rtbContextDecisionTotal.inc({ status });
   }
 
   incRtbReservationFailure(reason: string, count = 1) {
