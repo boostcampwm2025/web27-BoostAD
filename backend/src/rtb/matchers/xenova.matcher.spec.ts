@@ -59,10 +59,8 @@ describe('TransformerMatcher ANN path', () => {
       recordRtbEmbeddingBackground: jest.fn(),
       recordRtbLexicalFallback: jest.fn(),
       recordRtbContextDecision: jest.fn(),
-      recordRtbHybridShadow: jest.fn(),
       observeRtbHybridSparseLookupDuration: jest.fn(),
       observeRtbHybridFusionDuration: jest.fn(),
-      recordRtbHybridShadowWinnerAgreement: jest.fn(),
     }) as unknown as MetricsService;
 
   const buildConfigService = (overrides?: Record<string, string>) =>
@@ -330,32 +328,33 @@ describe('TransformerMatcher ANN path', () => {
     ]);
   });
 
-  it('keeps dense primary winners when RTB_RETRIEVAL_MODE=shadow', async () => {
+  it('returns the real hybrid reserve candidates when RTB_RETRIEVAL_MODE=hybrid', async () => {
     const denseOnly = {
       ...buildCampaign('dense-1', ['typescript'], { typescript: [1, 0] }),
       embeddingDocument: [0.9, 0.1],
     };
     const sparseOnly = {
       ...buildCampaign('sparse-1', ['typescript'], { typescript: [0.5, 0.5] }),
-      embeddingDocument: [0.1, 0.9],
+      embeddingDocument: [0.8, 0.2],
       maxCpc: 200,
     };
     const repository = buildRepository([denseOnly, sparseOnly]);
     repository.searchCampaignDocumentVectors.mockResolvedValue([
       { campaignId: 'dense-1', distance: 0.1, similarity: 0.9 },
     ]);
-    const metrics = buildMetricsService();
     const matcher = buildMatcher(
       repository,
       buildSnapshot([denseOnly, sparseOnly]),
       buildMlEngine(),
-      metrics,
+      buildMetricsService(),
       buildProductDefaultConfigService({
         RTB_MATCHER_ANN_ENABLED: 'true',
         RTB_CAMPAIGN_SOURCE: 'local_snapshot',
         RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD: '0.3',
-        RTB_RETRIEVAL_MODE: 'shadow',
-        RTB_HYBRID_SHADOW_LIMIT: '10',
+        RTB_RETRIEVAL_MODE: 'hybrid',
+        RTB_HYBRID_SPARSE_WEIGHT: '0.2',
+        RTB_HYBRID_SPARSE_SUPPLEMENT_LIMIT: '10',
+        RTB_HYBRID_FINAL_LIMIT: '10',
       })
     );
 
@@ -369,22 +368,14 @@ describe('TransformerMatcher ANN path', () => {
       isHighIntent: false,
     });
 
-    expect(candidates.map((candidate) => candidate.id)).toEqual(['dense-1']);
-    expect(
-      (metrics as unknown as { recordRtbHybridShadow: jest.Mock })
-        .recordRtbHybridShadow
-    ).toHaveBeenCalledWith('ok');
-    expect(
-      (
-        metrics as unknown as {
-          recordRtbHybridShadowWinnerAgreement: jest.Mock;
-        }
-      ).recordRtbHybridShadowWinnerAgreement
-    ).toHaveBeenCalled();
+    expect(candidates.map((candidate) => candidate.id)).toEqual([
+      'dense-1',
+      'sparse-1',
+    ]);
     expect(repository.reserveFirstAvailable).not.toBeDefined();
   });
 
-  it('returns fused shadow rankings from findQualityRankings(hybrid_shadow)', async () => {
+  it('returns Hybrid rankings from findQualityRankings(hybrid)', async () => {
     const denseOnly = {
       ...buildCampaign('dense-1', ['react'], { react: [1, 0] }),
       embeddingDocument: [0.9, 0.1],
@@ -416,7 +407,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const shadow = await matcher.findQualityRankings(
+    const hybrid = await matcher.findQualityRankings(
       {
         blogKey: 'blog',
         blogId: 1,
@@ -426,13 +417,13 @@ describe('TransformerMatcher ANN path', () => {
         behaviorScore: 50,
         isHighIntent: false,
       },
-      'hybrid_shadow'
+      'hybrid'
     );
 
-    expect(shadow.map((candidate) => candidate.id)).toEqual(
+    expect(hybrid.map((candidate) => candidate.id)).toEqual(
       expect.arrayContaining(['dense-1', 'sparse-1'])
     );
-    expect(shadow[0]?.id).toBe('dense-1');
+    expect(hybrid[0]?.id).toBe('dense-1');
   });
 
   it('exact-reranks the hybrid pool below the locked dense winner', async () => {
@@ -472,7 +463,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const shadow = await matcher.findQualityRankings(
+    const hybrid = await matcher.findQualityRankings(
       {
         blogKey: 'blog',
         blogId: 1,
@@ -482,20 +473,20 @@ describe('TransformerMatcher ANN path', () => {
         behaviorScore: 50,
         isHighIntent: false,
       },
-      'hybrid_shadow'
+      'hybrid'
     );
 
-    expect(shadow.map((candidate) => candidate.id)).toEqual([
+    expect(hybrid.map((candidate) => candidate.id)).toEqual([
       'dense-ann-1',
       'dense-exact-1',
       'sparse-1',
     ]);
-    expect(shadow[0].similarity).toBe(0.6);
-    expect(shadow[1].similarity).toBe(0.9);
-    expect(shadow[2].score).toBeLessThan(shadow[1].score);
+    expect(hybrid[0].similarity).toBe(0.6);
+    expect(hybrid[1].similarity).toBe(0.9);
+    expect(hybrid[2].score).toBeLessThan(hybrid[1].score);
   });
 
-  it('does not run hybrid shadow when RTB_RETRIEVAL_MODE=dense_only', async () => {
+  it('does not run Hybrid retrieval when RTB_RETRIEVAL_MODE=dense_only', async () => {
     const campaign1 = {
       ...buildCampaign('c1', ['typescript'], { typescript: [1, 0] }),
       embeddingDocument: [0.4, 0.6],
@@ -504,12 +495,12 @@ describe('TransformerMatcher ANN path', () => {
     repository.searchCampaignDocumentVectors.mockResolvedValue([
       { campaignId: 'c1', distance: 0.1, similarity: 0.9 },
     ]);
-    const metrics = buildMetricsService();
+    const snapshot = buildSnapshot([campaign1]);
     const matcher = buildMatcher(
       repository,
-      buildSnapshot([campaign1]),
+      snapshot,
       buildMlEngine(),
-      metrics,
+      buildMetricsService(),
       buildProductDefaultConfigService({
         RTB_MATCHER_ANN_ENABLED: 'true',
         RTB_CAMPAIGN_SOURCE: 'local_snapshot',
@@ -517,7 +508,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    await matcher.findCandidatesByTags({
+    const candidates = await matcher.findCandidatesByTags({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -527,10 +518,8 @@ describe('TransformerMatcher ANN path', () => {
       isHighIntent: false,
     });
 
-    expect(
-      (metrics as unknown as { recordRtbHybridShadow: jest.Mock })
-        .recordRtbHybridShadow
-    ).not.toHaveBeenCalled();
+    expect(candidates.map((candidate) => candidate.id)).toEqual(['c1']);
+    expect(snapshot.findCampaignsByTags).not.toHaveBeenCalled();
   });
 
   it('returns no semantic candidates when every document is below threshold', async () => {

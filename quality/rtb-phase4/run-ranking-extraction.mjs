@@ -39,13 +39,13 @@ export function chunk(items, size) {
 
 export function resolveRetrievalModes(mode) {
   if (mode === 'paired') {
-    return ['dense_only', 'hybrid_shadow'];
+    return ['dense_only', 'hybrid'];
   }
-  if (mode === 'dense_only' || mode === 'hybrid_shadow') {
+  if (mode === 'dense_only' || mode === 'hybrid') {
     return [mode];
   }
   throw new Error(
-    'ranking extractor는 dense_only, hybrid_shadow 또는 paired만 지원합니다.'
+    'ranking extractor는 dense_only, hybrid 또는 paired만 지원합니다.'
   );
 }
 

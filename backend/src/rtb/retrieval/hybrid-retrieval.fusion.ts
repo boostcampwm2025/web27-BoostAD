@@ -30,7 +30,7 @@ const DEFAULT_RRF_K = 60;
 
 /**
  * Dense/sparse의 raw score 척도를 직접 섞지 않고 순위 기반 RRF로 합친다.
- * 각 source의 첫 등장만 사용하며, evidence를 남겨 shadow 결과를 설명할 수 있게 한다.
+ * 각 source의 첫 등장만 사용하며, evidence를 남겨 Hybrid 결과를 설명할 수 있게 한다.
  */
 export function fuseHybridRankings(
   denseHits: readonly RetrievalHit[],

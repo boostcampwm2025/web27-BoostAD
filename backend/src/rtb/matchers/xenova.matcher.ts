@@ -24,7 +24,7 @@ import {
 
 type MatchableCampaign = CachedCampaign | ServingCampaign;
 type DenseRetrievalMode = 'legacy_tag' | 'semantic_document';
-type RetrievalMode = 'dense_only' | 'shadow' | 'hybrid';
+type RetrievalMode = 'dense_only' | 'hybrid';
 
 @Injectable()
 export class TransformerMatcher extends Matcher {
@@ -135,17 +135,12 @@ export class TransformerMatcher extends Matcher {
       'RTB_RETRIEVAL_MODE',
       'dense_only'
     );
-    if (
-      retrievalMode !== 'dense_only' &&
-      retrievalMode !== 'shadow' &&
-      retrievalMode !== 'hybrid'
-    ) {
+    if (retrievalMode !== 'dense_only' && retrievalMode !== 'hybrid') {
       throw new Error(
         `지원하지 않는 RTB_RETRIEVAL_MODE입니다: ${retrievalMode}`
       );
     }
-    // hybrid 승격은 품질·성능 gate 이후. 현재는 shadow와 동일하게 primary만 reserve한다.
-    this.retrievalMode = retrievalMode === 'hybrid' ? 'shadow' : retrievalMode;
+    this.retrievalMode = retrievalMode;
     this.hybridRrfK = this.getPositiveIntEnv('RTB_HYBRID_RRF_K', 60);
     this.hybridDenseWeight = this.getNonNegativeFloatEnv(
       'RTB_HYBRID_DENSE_WEIGHT',
@@ -571,13 +566,16 @@ export class TransformerMatcher extends Matcher {
 
     if (candidates.length === 0) {
       this.metricsService.incRtbFallback('matcher_empty');
-    } else if (this.retrievalMode === 'shadow') {
-      await this.recordHybridShadow(
+      return [];
+    }
+    if (this.retrievalMode === 'hybrid') {
+      const hybrid = await this.buildHybridCandidates(
         context,
         requestEmbedding,
         retainedHits,
         candidates
       );
+      return hybrid.length > 0 ? hybrid : candidates;
     }
     return candidates;
   }
@@ -586,10 +584,6 @@ export class TransformerMatcher extends Matcher {
     context: DecisionContext,
     mode: QualityRetrievalMode = 'dense_only'
   ): Promise<ScoredCandidate[]> {
-    if (mode !== 'hybrid_shadow') {
-      return this.findCandidatesByTags(context);
-    }
-
     const requestText = this.buildRequestText(context.tags);
     const requestEmbedding = await this.resolveRequestEmbeddingForQuality(
       context,
@@ -624,14 +618,17 @@ export class TransformerMatcher extends Matcher {
       const campaign = eligibleById.get(hit.campaignId);
       return campaign ? [this.buildCandidate(campaign, hit.similarity)] : [];
     });
+    if (mode === 'dense_only') {
+      return primary;
+    }
 
-    const shadow = await this.buildHybridShadowCandidates(
+    const hybrid = await this.buildHybridCandidates(
       context,
       requestEmbedding,
       retainedHits,
       primary
     );
-    return shadow.length > 0 ? shadow : primary;
+    return hybrid.length > 0 ? hybrid : primary;
   }
 
   private async resolveRequestEmbeddingForQuality(
@@ -652,33 +649,7 @@ export class TransformerMatcher extends Matcher {
     return this.mlEngine.getEmbedding(requestText, 'query');
   }
 
-  private async recordHybridShadow(
-    context: DecisionContext,
-    requestEmbedding: number[],
-    denseHits: Array<{ campaignId: string; similarity: number }>,
-    primary: ScoredCandidate[]
-  ): Promise<void> {
-    const shadow = await this.buildHybridShadowCandidates(
-      context,
-      requestEmbedding,
-      denseHits,
-      primary
-    );
-    if (shadow.length === 0) {
-      this.metricsService.recordRtbHybridShadow('empty');
-      return;
-    }
-    this.metricsService.recordRtbHybridShadow('ok');
-    const primaryWinner = primary[0]?.id;
-    const shadowWinner = shadow[0]?.id;
-    if (primaryWinner && shadowWinner) {
-      this.metricsService.recordRtbHybridShadowWinnerAgreement(
-        primaryWinner === shadowWinner
-      );
-    }
-  }
-
-  private async buildHybridShadowCandidates(
+  private async buildHybridCandidates(
     context: DecisionContext,
     requestEmbedding: number[],
     denseHits: Array<{ campaignId: string; similarity: number }>,
@@ -712,7 +683,7 @@ export class TransformerMatcher extends Matcher {
       this.elapsedMs(fusionStartedAt) / 1000
     );
     this.metricsService.recordRtbStage(
-      'match_hybrid_shadow_fusion',
+      'match_hybrid_fusion',
       fused.length > 0 ? 'ok' : 'fallback',
       this.elapsedMs(fusionStartedAt)
     );
@@ -776,8 +747,8 @@ export class TransformerMatcher extends Matcher {
       }
     }
 
-    // Shadow 단계에서는 sparse 보너스나 exact 재계산이 현재 Dense winner를
-    // 바꾸지 않는다. 개선 신호는 2~10위 후보 품질에서만 먼저 검증한다.
+    // Sparse 보너스나 exact 재계산이 현재 Dense winner를 바꾸지 않도록 하고,
+    // Hybrid 개선은 2~10위 reserve 후보에만 반영한다.
     const denseWinner = [...primary].sort((left, right) => {
       if (right.score !== left.score) return right.score - left.score;
       if (right.maxCpc !== left.maxCpc) return right.maxCpc - left.maxCpc;
@@ -810,7 +781,7 @@ export class TransformerMatcher extends Matcher {
       })
       .slice(0, this.hybridFinalLimit);
     this.metricsService.recordRtbStage(
-      'match_hybrid_shadow_exact_rerank',
+      'match_hybrid_exact_rerank',
       result.length > 0 ? 'ok' : 'fallback',
       this.elapsedMs(rerankStartedAt)
     );

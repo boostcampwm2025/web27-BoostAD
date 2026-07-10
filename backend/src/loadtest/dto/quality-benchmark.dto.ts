@@ -75,8 +75,8 @@ export class ExtractQualityRankingsDto {
   datasetVersion: string;
 
   @IsOptional()
-  @IsIn(['dense_only', 'hybrid_shadow'])
-  retrievalMode?: 'dense_only' | 'hybrid_shadow';
+  @IsIn(['dense_only', 'hybrid'])
+  retrievalMode?: 'dense_only' | 'hybrid';
 
   @IsOptional()
   @IsInt()

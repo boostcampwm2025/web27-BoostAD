@@ -205,7 +205,7 @@ test('ranking runner creates complete deterministic batches', () => {
 test('ranking runner resolves paired extraction in one loaded session', () => {
   assert.deepEqual(resolveRetrievalModes('paired'), [
     'dense_only',
-    'hybrid_shadow',
+    'hybrid',
   ]);
   assert.deepEqual(resolveRetrievalModes('dense_only'), ['dense_only']);
   assert.throws(() => resolveRetrievalModes('unknown'), /paired/);

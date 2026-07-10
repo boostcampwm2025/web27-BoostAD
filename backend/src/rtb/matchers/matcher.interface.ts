@@ -1,6 +1,6 @@
 import type { DecisionContext, ScoredCandidate } from '../types/decision.types';
 
-export type QualityRetrievalMode = 'dense_only' | 'hybrid_shadow';
+export type QualityRetrievalMode = 'dense_only' | 'hybrid';
 
 export abstract class Matcher {
   /**
@@ -13,7 +13,7 @@ export abstract class Matcher {
 
   /**
    * 품질 benchmark용 ranking. 기본은 primary dense와 동일하다.
-   * hybrid_shadow는 구현체가 RRF shadow topK를 반환할 수 있다.
+   * hybrid는 구현체가 Dense-primary Hybrid topK를 반환할 수 있다.
    */
   async findQualityRankings(
     context: DecisionContext,

@@ -137,7 +137,7 @@ export class QualityBenchmarkService {
   ): Promise<{
     sessionId: string;
     datasetVersion: string;
-    retrievalMode: 'dense_only' | 'hybrid_shadow';
+    retrievalMode: 'dense_only' | 'hybrid';
     topK: number;
     rankings: QualityRanking[];
     reserveCalled: false;
