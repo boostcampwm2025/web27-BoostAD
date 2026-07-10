@@ -10,6 +10,7 @@ import { MLEngine } from './ml/mlEngine.interface';
 import { XenovaMLEngine } from './ml/xenova-mlEngine';
 import { RequestEmbeddingCacheService } from './ml/request-embedding-cache.service';
 import { RedisModule } from '../redis/redis.module';
+import { ContextEmbeddingService } from './context/context-embedding.service';
 
 // Matcher
 import { Matcher } from './matchers/matcher.interface';
@@ -52,6 +53,7 @@ import { QueueModule } from '../queue/queue.module';
   providers: [
     RTBService,
     RequestEmbeddingCacheService,
+    ContextEmbeddingService,
 
     // Matcher
     {
@@ -77,6 +79,11 @@ import { QueueModule } from '../queue/queue.module';
       useClass: XenovaMLEngine,
     },
   ],
-  exports: [RTBService, MLEngine, RequestEmbeddingCacheService],
+  exports: [
+    RTBService,
+    MLEngine,
+    RequestEmbeddingCacheService,
+    ContextEmbeddingService,
+  ],
 })
 export class RTBModule {}

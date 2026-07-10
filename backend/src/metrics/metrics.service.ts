@@ -22,6 +22,8 @@ type QueueJobLabel = 'queue' | 'state';
 type EmbeddingSourceLabel = 'source';
 type EmbeddingBackgroundLabel = 'result';
 type LexicalFallbackLabel = 'reason';
+type ContextObserveLabel = 'status';
+type ContextJobLabel = 'result';
 
 @Injectable()
 export class MetricsService {
@@ -239,6 +241,27 @@ export class MetricsService {
     registers: [this.registry],
   });
 
+  private readonly rtbContextObserveTotal = new Counter<ContextObserveLabel>({
+    name: 'boostad_rtb_context_observe_total',
+    help: 'Context observe result count',
+    labelNames: ['status'],
+    registers: [this.registry],
+  });
+
+  private readonly rtbContextJobTotal = new Counter<ContextJobLabel>({
+    name: 'boostad_rtb_context_job_total',
+    help: 'Context embedding job lifecycle',
+    labelNames: ['result'],
+    registers: [this.registry],
+  });
+
+  private readonly rtbContextEmbeddingDurationSeconds = new Histogram({
+    name: 'boostad_rtb_context_embedding_duration_seconds',
+    help: 'Context embedding worker generation duration',
+    buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
+    registers: [this.registry],
+  });
+
   private readonly rtbReservationFailuresTotal =
     new Counter<RtbReservationFailureLabel>({
       name: 'boostad_rtb_reservation_failures_total',
@@ -451,6 +474,22 @@ export class MetricsService {
     this.rtbLexicalFallbackTotal.inc({ reason });
     if (Number.isFinite(candidateCount) && candidateCount >= 0) {
       this.rtbLexicalCandidateCount.observe(candidateCount);
+    }
+  }
+
+  recordRtbContextObserve(status: 'READY' | 'PENDING' | 'FAILED') {
+    this.rtbContextObserveTotal.inc({ status });
+  }
+
+  recordRtbContextJob(
+    result: 'enqueued' | 'deduplicated' | 'completed' | 'failed'
+  ) {
+    this.rtbContextJobTotal.inc({ result });
+  }
+
+  observeRtbContextEmbeddingDuration(seconds: number) {
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      this.rtbContextEmbeddingDurationSeconds.observe(seconds);
     }
   }
 

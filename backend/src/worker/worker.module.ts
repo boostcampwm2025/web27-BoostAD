@@ -13,6 +13,8 @@ import { CacheRepository } from 'src/cache/repository/cache.repository.interface
 import { RedisCacheRepository } from 'src/cache/repository/redis-cache.repository';
 import { RedisTTLWorker } from './redis-ttl.worker';
 import { getTypeOrmConfig } from 'src/config/typeorm.config';
+import { ContextEmbeddingService } from 'src/rtb/context/context-embedding.service';
+import { MetricsModule } from 'src/metrics/metrics.module';
 
 @Module({
   imports: [
@@ -25,9 +27,11 @@ import { getTypeOrmConfig } from 'src/config/typeorm.config';
     }),
     RedisModule,
     QueueModule,
+    MetricsModule,
   ],
   providers: [
     EmbeddingWorker,
+    ContextEmbeddingService,
     RedisTTLWorker,
     { provide: MLEngine, useClass: XenovaMLEngine },
     {

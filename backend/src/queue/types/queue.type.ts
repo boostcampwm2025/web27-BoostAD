@@ -11,8 +11,18 @@ export interface BlogEmbeddingJobData {
   text: string;
 }
 
+export interface ContextEmbeddingJobData {
+  contextId: string;
+  contentHash: string;
+  modelVersion: string;
+  text: string;
+}
+
 // Union 타입으로 통합
-export type EmbeddingJobData = CampaignEmbeddingJobData | BlogEmbeddingJobData;
+export type EmbeddingJobData =
+  | CampaignEmbeddingJobData
+  | BlogEmbeddingJobData
+  | ContextEmbeddingJobData;
 
 export interface BidLogJobItemData {
   campaignId: string;

@@ -251,6 +251,66 @@ const result = {
           'boostad_rtb_lexical_candidate_count'
         ),
       },
+      context: {
+        observe: {
+          ready: counterDeltaByLabel(
+            before,
+            after,
+            'boostad_rtb_context_observe_total',
+            'status',
+            'READY'
+          ),
+          pending: counterDeltaByLabel(
+            before,
+            after,
+            'boostad_rtb_context_observe_total',
+            'status',
+            'PENDING'
+          ),
+          failed: counterDeltaByLabel(
+            before,
+            after,
+            'boostad_rtb_context_observe_total',
+            'status',
+            'FAILED'
+          ),
+        },
+        jobs: {
+          enqueued: counterDeltaByLabel(
+            before,
+            after,
+            'boostad_rtb_context_job_total',
+            'result',
+            'enqueued'
+          ),
+          deduplicated: counterDeltaByLabel(
+            before,
+            after,
+            'boostad_rtb_context_job_total',
+            'result',
+            'deduplicated'
+          ),
+          completed: counterDeltaByLabel(
+            before,
+            after,
+            'boostad_rtb_context_job_total',
+            'result',
+            'completed'
+          ),
+          failed: counterDeltaByLabel(
+            before,
+            after,
+            'boostad_rtb_context_job_total',
+            'result',
+            'failed'
+          ),
+        },
+        generation: histogramDelta(
+          before,
+          after,
+          'boostad_rtb_context_embedding_duration_seconds'
+        ),
+      },
     },
     cpuSeconds: counterDeltaByMetric(
       before,

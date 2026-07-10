@@ -4,6 +4,9 @@ import { Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { OnEvent } from '@nestjs/event-emitter';
 import { MLEngine } from 'src/rtb/ml/mlEngine.interface';
 import { CampaignCacheRepository } from 'src/campaign/repository/campaign.cache.repository.interface';
+import { ContextEmbeddingService } from 'src/rtb/context/context-embedding.service';
+import type { ContextEmbeddingJobData } from 'src/queue/types/queue.type';
+import { MetricsService } from 'src/metrics/metrics.service';
 
 @Processor('embedding-queue', { autorun: false })
 export class EmbeddingWorker
@@ -15,7 +18,9 @@ export class EmbeddingWorker
 
   constructor(
     private readonly mlEngine: MLEngine,
-    private readonly campaignCacheRepository: CampaignCacheRepository
+    private readonly campaignCacheRepository: CampaignCacheRepository,
+    private readonly contextEmbeddingService: ContextEmbeddingService,
+    private readonly metricsService: MetricsService
   ) {
     super();
   }
@@ -52,12 +57,37 @@ export class EmbeddingWorker
           campaignId: string;
         };
         await this.generateCampaignEmbedding(campaignId);
+      } else if (job.name === 'generate-context-embedding') {
+        await this.generateContextEmbedding(
+          job as Job<ContextEmbeddingJobData>
+        );
       } else {
         this.logger.warn(`Unknown job type: ${job.name}`);
       }
     } catch (error) {
       this.logger.error(`Job ${job.id} failed:`, error);
       throw error;
+    }
+  }
+
+  private async generateContextEmbedding(job: Job<ContextEmbeddingJobData>) {
+    const startedAt = process.hrtime.bigint();
+    try {
+      const embedding = await this.mlEngine.getEmbedding(job.data.text);
+      await this.contextEmbeddingService.completeJob(job.data, embedding);
+      this.metricsService.recordRtbContextJob('completed');
+    } catch (error) {
+      const configuredAttempts = job.opts.attempts ?? 1;
+      const isFinalAttempt = job.attemptsMade + 1 >= configuredAttempts;
+      if (isFinalAttempt) {
+        await this.contextEmbeddingService.failJob(job.data, error);
+      }
+      this.metricsService.recordRtbContextJob('failed');
+      throw error;
+    } finally {
+      this.metricsService.observeRtbContextEmbeddingDuration(
+        Number(process.hrtime.bigint() - startedAt) / 1_000_000_000
+      );
     }
   }
 

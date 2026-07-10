@@ -15,6 +15,8 @@ import { Public } from '../auth/decorators/public.decorator';
 import { type Response } from 'express';
 import { randomUUID } from 'crypto';
 import { MetricsService } from '../metrics/metrics.service';
+import { ContextEmbeddingService } from './context/context-embedding.service';
+import { ContextObserveDto } from './dto/context-observe.dto';
 import {
   createRtbPathLogger,
   rtbPathLogsEnabled,
@@ -29,8 +31,24 @@ export class RTBController {
 
   constructor(
     private readonly rtbService: RTBService,
-    private readonly metricsService: MetricsService
+    private readonly metricsService: MetricsService,
+    private readonly contextEmbeddingService: ContextEmbeddingService
   ) {}
+
+  @Post('context/observe')
+  async observeContext(@Body() body: ContextObserveDto) {
+    const state = await this.contextEmbeddingService.observe({
+      title: body.title,
+      body: body.body,
+      tags: body.tags,
+    });
+    return {
+      status: state.status,
+      contextId: state.contextId,
+      contentHash: state.contentHash,
+      timestamp: new Date().toISOString(),
+    };
+  }
 
   @Post('decision')
   async getDecision(
