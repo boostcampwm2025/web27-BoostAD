@@ -73,7 +73,18 @@ const result = {
     ),
     reservationRejected,
     stages: Object.fromEntries(
-      ['match', 'reserve', 'rollback', 'total'].map((stage) => [
+      [
+        'match',
+        'match_request_embedding',
+        'match_ann_search',
+        'match_ann_group_hits',
+        'match_campaign_hydrate_redis',
+        'match_campaign_hydrate_snapshot',
+        'match_exact_rerank',
+        'reserve',
+        'rollback',
+        'total',
+      ].map((stage) => [
         stage,
         durationHistogramDelta(
           before,
@@ -225,7 +236,79 @@ function durationHistogramDelta(
     count: delta.count,
     sumSeconds: delta.sum,
     avgMs: delta.avg === null ? null : delta.avg * 1000,
+    p50UpperBoundMs: histogramQuantileUpperBoundMs(
+      beforeSamples,
+      afterSamples,
+      metric,
+      labels,
+      0.5
+    ),
+    p95UpperBoundMs: histogramQuantileUpperBoundMs(
+      beforeSamples,
+      afterSamples,
+      metric,
+      labels,
+      0.95
+    ),
+    p99UpperBoundMs: histogramQuantileUpperBoundMs(
+      beforeSamples,
+      afterSamples,
+      metric,
+      labels,
+      0.99
+    ),
   };
+}
+
+function histogramQuantileUpperBoundMs(
+  beforeSamples,
+  afterSamples,
+  metric,
+  labels,
+  quantile
+) {
+  const count = counterDelta(
+    beforeSamples,
+    afterSamples,
+    `${metric}_count`,
+    labels
+  );
+  if (count === 0) {
+    return null;
+  }
+
+  const boundaries = [
+    ...new Set(
+      afterSamples
+        .filter(
+          (sample) =>
+            sample.metric === `${metric}_bucket` &&
+            Object.entries(labels).every(
+              ([key, value]) => sample.labels[key] === value
+            )
+        )
+        .map((sample) => sample.labels.le)
+    ),
+  ].sort((a, b) => {
+    if (a === '+Inf') return 1;
+    if (b === '+Inf') return -1;
+    return Number(a) - Number(b);
+  });
+  const target = count * quantile;
+
+  for (const boundary of boundaries) {
+    const cumulative = counterDelta(
+      beforeSamples,
+      afterSamples,
+      `${metric}_bucket`,
+      { ...labels, le: boundary }
+    );
+    if (cumulative >= target) {
+      return boundary === '+Inf' ? null : Number(boundary) * 1000;
+    }
+  }
+
+  return null;
 }
 
 function sampleSum(samples, metric, expectedLabels) {

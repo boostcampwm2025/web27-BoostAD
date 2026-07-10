@@ -50,6 +50,7 @@ jq -n \
   --arg corpusSha "$corpus_sha" \
   --arg corpusSeed "$corpus_seed" \
   --arg budgetMode "${RTB_BUDGET_MODE:-winner_only}" \
+  --arg campaignSource "${RTB_CAMPAIGN_SOURCE:-redis_json}" \
   --argjson corpusSize "$corpus_size" \
   '{
     runId: $runId,
@@ -60,6 +61,7 @@ jq -n \
     gitSha: $gitSha,
     gitDiffSha: $gitDiffSha,
     budgetMode: $budgetMode,
+    campaignSource: $campaignSource,
     corpus: {sha256: $corpusSha, seed: $corpusSeed, size: $corpusSize},
     lifecycle: {
       restartBackendEachCell: false,
