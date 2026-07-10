@@ -13,6 +13,55 @@ before baseline에서 다음 병목이 확인됐다.
 
 기존 경로는 top-K 10개를 병렬 예약하고, 성공 후보 중 winner를 고른 뒤 나머지를 rollback했다. Random 60에서는 reserve/rollback이 전체 latency를 지배했다.
 
+## 설계 인과
+
+이 섹션은 “예전엔 왜 후보 전체에 예약을 걸었는지”, “지금은 왜 1명만 예약해도 되는지”의 인과를 남긴다. 성능 수치보다 **예약 의미(동시성·순위·mutation 순서)** 가 핵심이다.
+
+### 1. ANN·TopK 이전 — 유사도 통과 후보 전부 reserve
+
+당시 matcher는 eligible 캠페인을 전부 돌며 `similarity >= 0.3`인 후보를 **개수 제한 없이** 반환했다. 그 직후 흐름은 다음과 같았다.
+
+```text
+match(유사도 필터) → reserve(후보 전체 incrementSpent) → score → select → rollback(패자)
+```
+
+전부 예약한 이유는 경매 품질이 아니라 **동시 요청에서의 예산 선점**이었다. 한 요청의 경매에 여러 후보가 들어가는데, 낙찰 전에 참가자 예산을 hold하지 않으면 이어지는 요청이 같은 예산을 보고 과다 낙찰할 수 있었다. 패자는 select 이후 `decrementSpent`로 되돌렸다.
+
+이 시기 matcher의 `TOP_K=3`은 후보 개수 제한이 아니라, 캠페인 태그 유사도 스코어링용(top-3 태그 가중)이었다. 최종 경매 점수(`score` stage)는 reserve **이후**에 계산됐다.
+
+관련: `_docs/technical-writing/02_rtb-reserve-rollback-bounded-fanout.md`
+
+### 2. TopK window — reserve peak fan-out만 제한
+
+다음 단계는 후보 집합을 새로 추리는 것이 아니라, 이미 match된 후보를 점수순으로 정렬한 뒤 `TOP_K=10` window씩 reserve하는 것이었다. 한 window에서 성공 후보가 나오면 멈추고, 그 window 안에서만 select·rollback했다.
+
+즉 “전부 hold → 패자 환불” 구조는 유지한 채, 한 번에 Redis로 퍼지는 폭만 bounded화했다. hard cutoff(상위 10개만 보고 종료)는 상위가 예산 거절일 때 하위 낙찰 가능 후보를 놓치므로 window scan을 택했다.
+
+### 3. ANN — 후보 축소(retrieval), 예약 정합성의 근거는 아님
+
+ANN(`campaign-tag` HNSW)은 eligible 전체 순회 대신 top-M shortlist를 만들어 match 비용을 줄인다. 요청당 reserve window 상한(예: top-M=20 → 최대 2 window)에도 도움이 된다.
+
+다만 ANN이 “이미 순위가 끝난 리스트”를 주므로 1등만 예약해도 된다로 해석하면 안 된다. ANN은 retrieval이다. 최종 낙찰 순위는 여전히 score / maxCpc / tie-break(`CampaignSelector`)가 정한다.
+
+관련: `_docs/technical-writing/03_rtb-ann-campaign-tag-retrieval.md`
+
+### 4. Winner-only — 순위 확정 후 1명만 atomic reserve
+
+Phase 1A가 바꾼 핵심은 hold/rollback 폭이 아니라 **mutation 순서**다.
+
+```text
+match(후보) → select(순위 확정) → reserve(순위대로 예산 되는 첫 후보 1명만)
+```
+
+1명만 예약해도 되는 이유:
+
+1. 누가 이길지는 Redis spent mutation **전에** 이미 확정된다.
+2. 예약은 순위대로 Lua가 원자적으로 1명만 성공시킨다.
+3. 패자는 예약을 하지 않으므로 rollback이 필요 없다.
+4. 동시성은 “여러 명 hold 후 되돌리기”가 아니라 “한 명씩 atomic reserve”로 막는다.
+
+정리하면, 예전 전체 예약은 **순위가 reserve 뒤에 있던 경매 모델**에서 동시성을 지키려는 선택이었고, winner-only는 **순위를 먼저 확정할 수 있게 된 뒤** hold/rollback 구조를 제거한 선택이다. ANN은 그 앞단 후보 수를 줄여 주는 개선이지, winner-only 정합성의 직접 근거는 아니다.
+
 ## 구현
 
 ### 1. 순위와 예산 mutation 분리
@@ -119,6 +168,22 @@ dependency operation=reserve_first_available, count=1
 - 다중-key Lua는 현재 단일 Redis 인스턴스에서는 원자적으로 동작한다. Redis Cluster 전환 시 campaign key hash tag 또는 별도 budget state key 설계가 필요하다.
 - 이번 단계는 기존 `spent`를 reservation 용도로 계속 사용한다. view/click/TTL 상태 모델은 Phase 1B에서 분리해야 한다.
 
+## After loadtest (paired)
+
+- RUN_ID: `20260710-phase1a-after-164626`
+- 상세: `_docs/worklog/2026-07-10_phase1a-after-harness.md`
+- 첨부: `_docs/worklog/attachments/2026-07-10_phase1a-after-harness/20260710-phase1a-after-164626/`
+
+| cell | success p95 (before→after) | drop | reserve avgMs | rollback |
+|------|---------------------------:|-----:|--------------:|---------:|
+| fixed 30 | 29→24ms | 0→0 | 1.76→1.10 | 0.41→0 |
+| fixed 60 | 128→80ms | 17→8 | 19.1→3.12 | 2.69→0 |
+| random 30 | 1534→1312ms | 22→9 | 93.7→30.2 | 52.2→0 |
+| random 60 | 8487→7070ms | 1486→788 | 3416→580 | 3066→0 |
+
+rollback은 전 cell 0. Random 60 cliff는 완화됐지만 p95는 여전히 초 단위라 matcher/hydrate 후속이 필요하다.
+
 ## 다음 작업
 
-동일한 Fixed/Random 30·60 × 60s suite를 `budgetMode=winner_only`로 실행해 before와 paired 비교한다. 이번 사용자 요청 범위에는 after 부하테스트를 포함하지 않는다.
+- Phase 1B: view/click/TTL 상태 모델 분리
+- Phase 2: local campaign snapshot으로 RedisJSON hydrate 제거 후보 측정

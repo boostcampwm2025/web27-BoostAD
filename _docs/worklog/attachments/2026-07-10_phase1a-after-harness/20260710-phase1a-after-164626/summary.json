@@ -1,0 +1,151 @@
+{
+  "runId": "20260710-phase1a-after-164626",
+  "variant": "after",
+  "budgetMode": "winner_only",
+  "cells": {
+    "fixed_r30": {
+      "after": {
+        "iters": 1801,
+        "drop": 0,
+        "biz": 0.9833425874514159,
+        "succ_p95": 24.037999999999997,
+        "http_p95": null,
+        "reject": 19697,
+        "reserve_avg": 1.095118043309271,
+        "rollback_avg": null,
+        "reserve_count": 1801,
+        "rollback_count": 0,
+        "fanout_reserved_avg": 0.9833425874514159,
+        "fanout_rollback_avg": 0,
+        "fanout_attempts_avg": 11.920044419766796,
+        "onset_ms": 2201,
+        "onset_obs": true
+      },
+      "before": {
+        "iters": 1800,
+        "drop": 0,
+        "biz": 0.9838888888888889,
+        "succ_p95": 29.097999999999978,
+        "http_p95": null,
+        "reject": 19697,
+        "reserve_avg": 1.7596581788888879,
+        "rollback_avg": 0.4066713314511579,
+        "reserve_count": 1800,
+        "rollback_count": 1771,
+        "fanout_reserved_avg": 5.118333333333333,
+        "fanout_rollback_avg": 4.20214568040655,
+        "fanout_attempts_avg": 16.06111111111111,
+        "onset_ms": 2234,
+        "onset_obs": true
+      }
+    },
+    "fixed_r60": {
+      "after": {
+        "iters": 3593,
+        "drop": 8,
+        "biz": 0.49290286668522126,
+        "succ_p95": 80.42149999999978,
+        "http_p95": null,
+        "reject": 55500,
+        "reserve_avg": 3.115315155023656,
+        "rollback_avg": null,
+        "reserve_count": 3593,
+        "rollback_count": 0,
+        "fanout_reserved_avg": 0.49290286668522126,
+        "fanout_rollback_avg": 0,
+        "fanout_attempts_avg": 15.939604787086001,
+        "onset_ms": 1112,
+        "onset_obs": true
+      },
+      "before": {
+        "iters": 3584,
+        "drop": 17,
+        "biz": 0.494140625,
+        "succ_p95": 127.72299999999983,
+        "http_p95": null,
+        "reject": 55378,
+        "reserve_avg": 19.11627640680805,
+        "rollback_avg": 2.689007035573118,
+        "reserve_count": 3584,
+        "rollback_count": 1771,
+        "fanout_reserved_avg": 2.5703125,
+        "fanout_rollback_avg": 4.201581027667984,
+        "fanout_attempts_avg": 18.021763392857142,
+        "onset_ms": 1110,
+        "onset_obs": true
+      }
+    },
+    "random_r30": {
+      "after": {
+        "iters": 1792,
+        "drop": 9,
+        "biz": 0.9224330357142857,
+        "succ_p95": 1312.3201999999992,
+        "http_p95": null,
+        "reject": 561,
+        "reserve_avg": 30.17047616142694,
+        "rollback_avg": null,
+        "reserve_count": 1654,
+        "rollback_count": 0,
+        "fanout_reserved_avg": 0.9993954050785974,
+        "fanout_rollback_avg": 0,
+        "fanout_attempts_avg": 1.3385731559854896,
+        "onset_ms": 18649,
+        "onset_obs": true
+      },
+      "before": {
+        "iters": 1779,
+        "drop": 22,
+        "biz": 0.9224283305227656,
+        "succ_p95": 1534.003,
+        "http_p95": null,
+        "reject": 834,
+        "reserve_avg": 93.65240531242362,
+        "rollback_avg": 52.17348183485685,
+        "reserve_count": 1642,
+        "rollback_count": 1641,
+        "fanout_reserved_avg": 7.761266747868453,
+        "fanout_rollback_avg": 6.76599634369287,
+        "fanout_attempts_avg": 8.269183922046285,
+        "onset_ms": 18752,
+        "onset_obs": true
+      }
+    },
+    "random_r60": {
+      "after": {
+        "iters": 2813,
+        "drop": 788,
+        "biz": 0.919303234980448,
+        "succ_p95": 7070.251999999999,
+        "http_p95": null,
+        "reject": 2270,
+        "reserve_avg": 579.9564627929711,
+        "rollback_avg": null,
+        "reserve_count": 2589,
+        "rollback_count": 0,
+        "fanout_reserved_avg": 0.9988412514484357,
+        "fanout_rollback_avg": 0,
+        "fanout_attempts_avg": 1.8756276554654308,
+        "onset_ms": 14039,
+        "onset_obs": true
+      },
+      "before": {
+        "iters": 2114,
+        "drop": 1486,
+        "biz": 0.9200567644276254,
+        "succ_p95": 8486.629,
+        "http_p95": null,
+        "reject": 1761,
+        "reserve_avg": 3416.211812560284,
+        "rollback_avg": 3065.9721578832905,
+        "reserve_count": 1949,
+        "rollback_count": 1945,
+        "fanout_reserved_avg": 7.41405849153412,
+        "fanout_rollback_avg": 6.429305912596401,
+        "fanout_attempts_avg": 8.317598768599282,
+        "onset_ms": 10112,
+        "onset_obs": true
+      }
+    }
+  }
+}

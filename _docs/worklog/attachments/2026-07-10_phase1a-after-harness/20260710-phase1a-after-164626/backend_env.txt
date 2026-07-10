@@ -1,0 +1,5 @@
+ANN=true
+TOP_L=64
+TOP_M=20
+HIT_LIMIT=2
+BUDGET_MODE=winner_only

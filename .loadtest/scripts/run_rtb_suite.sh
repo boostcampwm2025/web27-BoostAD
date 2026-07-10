@@ -75,6 +75,15 @@ sampler_pid=""
 cleanup_sampler() {
   if [ -n "$sampler_pid" ]; then
     kill "$sampler_pid" >/dev/null 2>&1 || true
+    for _ in $(seq 1 10); do
+      if ! kill -0 "$sampler_pid" >/dev/null 2>&1; then
+        break
+      fi
+      sleep 0.2
+    done
+    if kill -0 "$sampler_pid" >/dev/null 2>&1; then
+      kill -9 "$sampler_pid" >/dev/null 2>&1 || true
+    fi
     wait "$sampler_pid" >/dev/null 2>&1 || true
     sampler_pid=""
   fi
@@ -253,6 +262,16 @@ for cell in $matrix; do
   k6_rc=${PIPESTATUS[0]}
 
   kill "$sampler_pid" >/dev/null 2>&1 || true
+  # sampler is an infinite loop; force-stop if it ignores TERM
+  for _ in $(seq 1 10); do
+    if ! kill -0 "$sampler_pid" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 0.2
+  done
+  if kill -0 "$sampler_pid" >/dev/null 2>&1; then
+    kill -9 "$sampler_pid" >/dev/null 2>&1 || true
+  fi
   wait "$sampler_pid" >/dev/null 2>&1 || true
   sampler_pid=""
 

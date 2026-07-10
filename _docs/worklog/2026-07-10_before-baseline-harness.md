@@ -73,6 +73,6 @@ OUTPUT_DIR=.loadtest/results/20260710-before-baseline-160102 \
 - Random 60 cliff는 reserve/rollback 지배.
 
 ## 다음 작업 체크리스트
-- [ ] candidate 변경 후 동일 suite로 paired after 실행
+- [x] candidate 변경 후 동일 suite로 paired after 실행 → `_docs/worklog/2026-07-10_phase1a-after-harness.md`
 - [ ] Fixed용 stable-budget fixture 여부 결정
 - [ ] onset/timeseries를 analysis schema에 정식 필드로 고정
