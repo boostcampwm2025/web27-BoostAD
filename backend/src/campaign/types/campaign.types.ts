@@ -68,6 +68,18 @@ export type CachedCampaign = {
 
   // 태그별 임베딩 (Worker가 추가)
   embeddingTags?: { [tagName: string]: number[] };
+
+  // 서로 다른 모델의 384차원 벡터를 혼용하지 않기 위한 namespace
+  embeddingModelVersion?: string;
+
+  // title + content + tags를 하나의 passage로 표현한 캠페인 semantic vector
+  embeddingDocument?: number[];
+};
+
+export type CampaignEmbeddingPayload = {
+  modelVersion: string;
+  document: number[];
+  tags: { [tagName: string]: number[] };
 };
 
 export type CachedCampaignWithoutSpent = Omit<
@@ -85,6 +97,12 @@ export type CampaignTagVectorSearchOptions = {
 export type CampaignTagVectorSearchHit = {
   campaignId: string;
   tagName: string;
+  distance: number;
+  similarity: number;
+};
+
+export type CampaignDocumentVectorSearchHit = {
+  campaignId: string;
   distance: number;
   similarity: number;
 };

@@ -41,6 +41,7 @@ describe('QualityBenchmarkService', () => {
     saveCampaignCacheById: jest.Mock;
     findCampaignCachesByIds: jest.Mock;
     searchCampaignTagVectors: jest.Mock;
+    searchCampaignDocumentVectors: jest.Mock;
     reserveFirstAvailable: jest.Mock;
   };
   let matcher: { findCandidatesByTags: jest.Mock };
@@ -76,6 +77,13 @@ describe('QualityBenchmarkService', () => {
             similarity: 1,
           }))
         )
+      ),
+      searchCampaignDocumentVectors: jest.fn(async () =>
+        state.map((item) => ({
+          campaignId: item.id,
+          distance: 0,
+          similarity: 1,
+        }))
       ),
       reserveFirstAvailable: jest.fn(),
     };
@@ -143,6 +151,8 @@ describe('QualityBenchmarkService', () => {
 
     expect(state.map((item) => item.id)).toEqual(['q4-frontend-guide']);
     expect(state[0].embeddingTags?.react).toEqual([1, 0]);
+    expect(state[0].embeddingDocument).toEqual([1, 0]);
+    expect(state[0].embeddingModelVersion).toBe('quality-model-v1');
 
     const restored = await service.restoreCampaigns(sessionId, 'secret');
 

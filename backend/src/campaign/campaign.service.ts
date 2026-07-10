@@ -33,10 +33,18 @@ import {
   CreditHistoryEntity,
   CreditHistoryType,
 } from 'src/advertiser/entities/credit-history.entity';
+import { ConfigService } from '@nestjs/config';
+import {
+  resolveEmbeddingProfile,
+  toEmbeddingNamespace,
+  type EmbeddingProfile,
+} from 'src/rtb/ml/embedding-profile';
 
 @Injectable()
 export class CampaignService {
   private readonly logger = new Logger(CampaignService.name);
+  private readonly embeddingProfile: EmbeddingProfile;
+  private readonly requireDocumentEmbedding: boolean;
 
   constructor(
     private readonly campaignRepository: CampaignRepository,
@@ -45,8 +53,16 @@ export class CampaignService {
     private readonly logRepository: LogRepository,
     @InjectDataSource() private readonly dataSource: DataSource,
     @InjectQueue('embedding-queue')
-    private readonly embeddingQueue: Queue<EmbeddingJobData>
-  ) {}
+    private readonly embeddingQueue: Queue<EmbeddingJobData>,
+    configService: ConfigService
+  ) {
+    this.embeddingProfile = resolveEmbeddingProfile(
+      configService.get<string>('RTB_EMBEDDING_PROFILE')
+    );
+    this.requireDocumentEmbedding =
+      configService.get<string>('RTB_DENSE_RETRIEVAL_MODE') ===
+      'semantic_document';
+  }
 
   @OnEvent('ml.model.ready')
   onModelReady(): void {
@@ -71,7 +87,7 @@ export class CampaignService {
         const cached = await this.campaignCacheRepository.findCampaignCacheById(
           campaign.id
         );
-        const campaignCache = this.mergeReusableEmbeddingTags(
+        const campaignCache = this.mergeReusableEmbeddings(
           this.convertToCachedCampaignType(campaign),
           cached
         );
@@ -84,7 +100,7 @@ export class CampaignService {
 
         loaded++;
 
-        if (!this.hasAllTagEmbeddings(campaignCache)) {
+        if (!this.hasRequiredEmbeddings(campaignCache)) {
           const queued = await this.enqueueInitialCampaignEmbedding(
             campaign.id
           );
@@ -110,7 +126,7 @@ export class CampaignService {
     }
   }
 
-  private mergeReusableEmbeddingTags(
+  private mergeReusableEmbeddings(
     campaign: CachedCampaign,
     cached: CachedCampaign | null
   ): CachedCampaign {
@@ -118,9 +134,21 @@ export class CampaignService {
       return campaign;
     }
 
+    const sameModel =
+      cached.embeddingModelVersion === this.embeddingProfile.modelVersion ||
+      (this.embeddingProfile.name === 'legacy_minilm' &&
+        !cached.embeddingModelVersion);
+    if (!sameModel) {
+      return campaign;
+    }
+
     const reusableEmbeddingTags = Object.fromEntries(
       campaign.tags
-        .filter((tagName) => cached.embeddingTags?.[tagName]?.length === 384)
+        .filter(
+          (tagName) =>
+            cached.embeddingTags?.[tagName]?.length ===
+            this.embeddingProfile.dimension
+        )
         .map((tagName) => [tagName, cached.embeddingTags![tagName]])
     );
 
@@ -131,22 +159,37 @@ export class CampaignService {
     return {
       ...campaign,
       embeddingTags: reusableEmbeddingTags,
+      embeddingModelVersion: this.embeddingProfile.modelVersion,
+      ...(cached.embeddingDocument?.length === this.embeddingProfile.dimension
+        ? { embeddingDocument: cached.embeddingDocument }
+        : {}),
     };
   }
 
-  private hasAllTagEmbeddings(campaign: CachedCampaign): boolean {
-    return Boolean(
+  private hasRequiredEmbeddings(campaign: CachedCampaign): boolean {
+    const hasTags = Boolean(
       campaign.tags?.length &&
       campaign.tags.every(
-        (tagName) => campaign.embeddingTags?.[tagName]?.length === 384
+        (tagName) =>
+          campaign.embeddingTags?.[tagName]?.length ===
+          this.embeddingProfile.dimension
       )
+    );
+    const sameModel =
+      campaign.embeddingModelVersion === this.embeddingProfile.modelVersion;
+    const hasDocument =
+      campaign.embeddingDocument?.length === this.embeddingProfile.dimension;
+    return Boolean(
+      hasTags && sameModel && (!this.requireDocumentEmbedding || hasDocument)
     );
   }
 
   private async enqueueInitialCampaignEmbedding(
     campaignId: string
   ): Promise<boolean> {
-    const jobId = `campaign-embedding-${campaignId}`;
+    const jobId = `campaign-embedding-${toEmbeddingNamespace(
+      this.embeddingProfile.modelVersion
+    )}-${campaignId}`;
     const existingJob = await this.embeddingQueue.getJob(jobId);
 
     if (existingJob) {
@@ -498,12 +541,14 @@ export class CampaignService {
         }
       );
 
-      // 4. 태그 있으면 비교 후 임베딩 재생성
-      if (
+      // 4. semantic passage 구성요소(title/content/tags)가 바뀌면 재생성
+      const tagsChanged = Boolean(
         dto.tags &&
         cachedCampaign.tags &&
         !this.areTagsEqual(dto.tags, cachedCampaign.tags)
-      ) {
+      );
+      const semanticTextChanged = Boolean(dto.title || dto.content);
+      if (tagsChanged || semanticTextChanged) {
         await this.campaignCacheRepository.deleteCampaignEmbeddingById(
           campaignId
         );

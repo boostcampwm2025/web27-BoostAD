@@ -4,14 +4,22 @@ import { OnEvent } from '@nestjs/event-emitter';
 import { CampaignCacheRepository } from './repository/campaign.cache.repository.interface';
 import type { CachedCampaign } from './types/campaign.types';
 import {
+  resolveEmbeddingProfile,
+  type EmbeddingProfile,
+} from '../rtb/ml/embedding-profile';
+import {
   CAMPAIGN_CACHE_REMOVED_EVENT,
   CAMPAIGN_CACHE_UPSERTED_EVENT,
   type CampaignCacheRemovedEvent,
   type CampaignCacheUpsertedEvent,
 } from './events/campaign-cache.events';
 
-export type ServingCampaign = Omit<CachedCampaign, 'embeddingTags'> & {
+export type ServingCampaign = Omit<
+  CachedCampaign,
+  'embeddingTags' | 'embeddingDocument'
+> & {
   embeddingTags?: Record<string, Float32Array>;
+  embeddingDocument?: Float32Array;
 };
 
 type SnapshotMutation = ServingCampaign | null;
@@ -39,11 +47,19 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
     SnapshotMutation
   >();
   private readonly enabled: boolean;
+  private readonly embeddingProfile: EmbeddingProfile;
+  private readonly requireDocumentEmbedding: boolean;
 
   constructor(
     private readonly campaignCacheRepository: CampaignCacheRepository,
     configService: ConfigService
   ) {
+    this.embeddingProfile = resolveEmbeddingProfile(
+      configService.get<string>('RTB_EMBEDDING_PROFILE')
+    );
+    this.requireDocumentEmbedding =
+      configService.get<string>('RTB_DENSE_RETRIEVAL_MODE') ===
+      'semantic_document';
     const campaignSource = configService.get<string>('RTB_CAMPAIGN_SOURCE');
     this.enabled = campaignSource
       ? campaignSource === 'local_snapshot'
@@ -69,7 +85,7 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
 
     const repairIds = uniqueIds.filter((id) => {
       const campaign = this.state.campaignsById.get(id);
-      return !campaign || !this.hasAllTagEmbeddings(campaign);
+      return !campaign || !this.hasRequiredEmbeddings(campaign);
     });
 
     if (repairIds.length > 0) {
@@ -221,12 +237,23 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
     };
   }
 
-  private hasAllTagEmbeddings(campaign: ServingCampaign): boolean {
-    return Boolean(
+  private hasRequiredEmbeddings(campaign: ServingCampaign): boolean {
+    const hasTags = Boolean(
       campaign.tags?.length &&
       campaign.tags.every(
-        (tagName) => campaign.embeddingTags?.[tagName]?.length === 384
+        (tagName) =>
+          campaign.embeddingTags?.[tagName]?.length ===
+          this.embeddingProfile.dimension
       )
+    );
+    const compatible =
+      campaign.embeddingModelVersion === this.embeddingProfile.modelVersion ||
+      (this.embeddingProfile.name === 'legacy_minilm' &&
+        !campaign.embeddingModelVersion);
+    const hasDocument =
+      campaign.embeddingDocument?.length === this.embeddingProfile.dimension;
+    return Boolean(
+      compatible && hasTags && (!this.requireDocumentEmbedding || hasDocument)
     );
   }
 
@@ -239,10 +266,14 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
           ])
         )
       : undefined;
+    const embeddingDocument = campaign.embeddingDocument
+      ? new Float32Array(campaign.embeddingDocument)
+      : undefined;
 
     return {
       ...campaign,
       embeddingTags,
+      embeddingDocument,
     };
   }
 

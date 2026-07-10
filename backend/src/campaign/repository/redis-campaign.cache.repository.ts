@@ -9,6 +9,8 @@ import {
   BudgetReservationResult,
   CachedCampaign,
   CachedCampaignWithoutSpent,
+  CampaignDocumentVectorSearchHit,
+  CampaignEmbeddingPayload,
   CampaignTagVectorSearchHit,
   CampaignTagVectorSearchOptions,
 } from '../types/campaign.types';
@@ -25,6 +27,11 @@ import {
   CAMPAIGN_CACHE_REMOVED_EVENT,
   CAMPAIGN_CACHE_UPSERTED_EVENT,
 } from '../events/campaign-cache.events';
+import {
+  resolveEmbeddingProfile,
+  toEmbeddingNamespace,
+  type EmbeddingProfile,
+} from '../../rtb/ml/embedding-profile';
 
 @Injectable()
 export class RedisCampaignCacheRepository implements CampaignCacheRepository {
@@ -34,14 +41,18 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
   private readonly logsEnabled = rtbPathLogsEnabled();
   private readonly KEY_PREFIX = 'campaign:';
   private readonly CAMPAIGN_KEYS_SET = 'campaign:keys';
-  private readonly CAMPAIGN_TAG_VECTOR_PREFIX = 'campaign-tag-vec:';
-  private readonly CAMPAIGN_TAG_VECTOR_INDEX = 'idx:campaign_tag_vec';
-  private readonly CAMPAIGN_TAG_VECTOR_KEYS_PREFIX = 'campaign-tag-vec-keys:';
+  private readonly embeddingProfile: EmbeddingProfile;
+  private readonly embeddingNamespace: string;
+  private readonly campaignTagVectorPrefix: string;
+  private readonly campaignTagVectorIndex: string;
+  private readonly campaignTagVectorKeysPrefix: string;
+  private readonly campaignDocumentVectorPrefix: string;
+  private readonly campaignDocumentVectorIndex: string;
   private readonly CAMPAIGN_CACHE_TTL = 60 * 60 * 24;
   private readonly ALL_CAMPAIGNS_CACHE_TTL_MS = 10_000; // RTB decision hot path (짧은 TTL로 Redis SCAN/JSON.GET 비용 완화)
   private readonly ALL_CAMPAIGNS_CACHE_TTL_JITTER_RATIO = 0.2; // multi-instance stampede 완화 (±20%)
   private readonly ALL_CAMPAIGNS_CACHE_SWR_MS = 3_000; // stale-while-revalidate window
-  private readonly EMBEDDING_DIM = 384;
+  private readonly embeddingDimension: number;
   private readonly hnswGraphDegree: number;
   private readonly hnswEfConstruction: number;
 
@@ -53,12 +64,33 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
 
   private allCampaignsInFlight: Promise<CachedCampaign[]> | null = null;
   private campaignTagVectorIndexReady: Promise<void> | null = null;
+  private campaignDocumentVectorIndexReady: Promise<void> | null = null;
 
   constructor(
     @Inject(IOREDIS_CLIENT) private readonly ioredisClient: AppIORedisClient,
     private readonly configService: ConfigService,
     private readonly eventEmitter: EventEmitter2
   ) {
+    this.embeddingProfile = resolveEmbeddingProfile(
+      this.configService.get<string>('RTB_EMBEDDING_PROFILE')
+    );
+    this.embeddingNamespace = toEmbeddingNamespace(
+      this.embeddingProfile.modelVersion
+    );
+    // legacy profile은 기존 index를 그대로 사용해 rollback 비용을 없앤다.
+    const legacy = this.embeddingProfile.name === 'legacy_minilm';
+    this.campaignTagVectorPrefix = legacy
+      ? 'campaign-tag-vec:'
+      : `campaign-tag-vec:${this.embeddingNamespace}:`;
+    this.campaignTagVectorIndex = legacy
+      ? 'idx:campaign_tag_vec'
+      : `idx:campaign_tag_vec:${this.embeddingNamespace}`;
+    this.campaignTagVectorKeysPrefix = legacy
+      ? 'campaign-tag-vec-keys:'
+      : `campaign-tag-vec-keys:${this.embeddingNamespace}:`;
+    this.campaignDocumentVectorPrefix = `campaign-doc-vec:${this.embeddingNamespace}:`;
+    this.campaignDocumentVectorIndex = `idx:campaign_doc_vec:${this.embeddingNamespace}`;
+    this.embeddingDimension = this.embeddingProfile.dimension;
     this.hnswGraphDegree = this.getPositiveIntEnv('RTB_MATCHER_ANN_HNSW_M', 16);
     this.hnswEfConstruction = this.getPositiveIntEnv(
       'RTB_MATCHER_ANN_HNSW_EF_CONSTRUCTION',
@@ -80,6 +112,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
         this.ioredisClient.sadd(this.CAMPAIGN_KEYS_SET, key),
       ]);
       await this.syncCampaignTagVectorDocs(data);
+      await this.syncCampaignDocumentVectorDoc(data);
       this.publishUpsert(data);
     } catch (error) {
       this.logger.error(`캐시 저장 실패: ${id}`, error);
@@ -170,6 +203,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       const updatedCampaign = await this.findCampaignCacheById(id);
       if (updatedCampaign) {
         await this.syncCampaignTagVectorDocs(updatedCampaign);
+        await this.syncCampaignDocumentVectorDoc(updatedCampaign);
         this.publishUpsert(updatedCampaign);
       }
     } catch (error) {
@@ -192,6 +226,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       const updatedCampaign = await this.findCampaignCacheById(id);
       if (updatedCampaign) {
         await this.syncCampaignTagVectorDocs(updatedCampaign);
+        await this.syncCampaignDocumentVectorDoc(updatedCampaign);
         this.publishUpsert(updatedCampaign);
       }
     } catch (error) {
@@ -210,7 +245,22 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
         '$.embeddingTags',
         JSON.stringify({})
       );
-      await this.deleteCampaignTagVectorDocs(id);
+      await Promise.all([
+        this.ioredisClient.call(
+          'JSON.SET',
+          key,
+          '$.embeddingDocument',
+          JSON.stringify(null)
+        ),
+        this.ioredisClient.call(
+          'JSON.SET',
+          key,
+          '$.embeddingModelVersion',
+          JSON.stringify(null)
+        ),
+        this.deleteCampaignTagVectorDocs(id),
+        this.deleteCampaignDocumentVectorDoc(id),
+      ]);
       const updatedCampaign = await this.findCampaignCacheById(id);
       if (updatedCampaign) {
         this.publishUpsert(updatedCampaign);
@@ -391,6 +441,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       this.ioredisClient.del(key),
       this.ioredisClient.srem(this.CAMPAIGN_KEYS_SET, key),
       this.deleteCampaignTagVectorDocs(id),
+      this.deleteCampaignDocumentVectorDoc(id),
     ]);
     this.allCampaignsCache = null;
     this.eventEmitter.emit(CAMPAIGN_CACHE_REMOVED_EVENT, { campaignId: id });
@@ -410,12 +461,20 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     const key = this.getCampaignCacheKey(id);
 
     try {
-      await this.ioredisClient.call(
-        'JSON.SET',
-        key,
-        '$.embeddingTags',
-        JSON.stringify(embeddingTags)
-      );
+      await Promise.all([
+        this.ioredisClient.call(
+          'JSON.SET',
+          key,
+          '$.embeddingTags',
+          JSON.stringify(embeddingTags)
+        ),
+        this.ioredisClient.call(
+          'JSON.SET',
+          key,
+          '$.embeddingModelVersion',
+          JSON.stringify(this.embeddingProfile.modelVersion)
+        ),
+      ]);
       const campaign = await this.findCampaignCacheById(id);
       if (campaign) {
         await this.syncCampaignTagVectorDocs(campaign);
@@ -423,6 +482,57 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       }
     } catch (error) {
       this.logger.error(`캠페인 임베딩 업데이트 실패: ${id}`, error);
+      throw error;
+    }
+  }
+
+  async updateCampaignEmbeddings(
+    id: string,
+    payload: CampaignEmbeddingPayload
+  ): Promise<void> {
+    if (payload.modelVersion !== this.embeddingProfile.modelVersion) {
+      throw new Error(
+        `campaign embedding model version 불일치: ${payload.modelVersion} vs ${this.embeddingProfile.modelVersion}`
+      );
+    }
+    this.assertEmbeddingDimension(payload.document, 'campaign document');
+    for (const [tagName, embedding] of Object.entries(payload.tags)) {
+      this.assertEmbeddingDimension(embedding, `campaign tag ${tagName}`);
+    }
+
+    const key = this.getCampaignCacheKey(id);
+    try {
+      const pipeline = this.ioredisClient.pipeline();
+      pipeline.call(
+        'JSON.SET',
+        key,
+        '$.embeddingModelVersion',
+        JSON.stringify(payload.modelVersion)
+      );
+      pipeline.call(
+        'JSON.SET',
+        key,
+        '$.embeddingDocument',
+        JSON.stringify(payload.document)
+      );
+      pipeline.call(
+        'JSON.SET',
+        key,
+        '$.embeddingTags',
+        JSON.stringify(payload.tags)
+      );
+      await pipeline.exec();
+
+      const campaign = await this.findCampaignCacheById(id);
+      if (campaign) {
+        await Promise.all([
+          this.syncCampaignTagVectorDocs(campaign),
+          this.syncCampaignDocumentVectorDoc(campaign),
+        ]);
+        this.publishUpsert(campaign);
+      }
+    } catch (error) {
+      this.logger.error(`캠페인 semantic 임베딩 업데이트 실패: ${id}`, error);
       throw error;
     }
   }
@@ -444,7 +554,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     try {
       const raw = await this.ioredisClient.call(
         'FT.SEARCH',
-        this.CAMPAIGN_TAG_VECTOR_INDEX,
+        this.campaignTagVectorIndex,
         query,
         'PARAMS',
         '2',
@@ -468,6 +578,49 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       return this.parseCampaignTagVectorSearchResults(raw);
     } catch (error) {
       this.logger.error('campaign-tag ANN 검색 실패', error);
+      return [];
+    }
+  }
+
+  async searchCampaignDocumentVectors(
+    options: CampaignTagVectorSearchOptions
+  ): Promise<CampaignDocumentVectorSearchHit[]> {
+    const topL = Math.max(1, Math.floor(options.topL));
+    await this.ensureCampaignDocumentVectorIndex();
+
+    const vectorQuery = this.encodeFloat32Buffer(options.queryEmbedding);
+    const highIntentTag = options.isHighIntent ? '1' : '0';
+    const nowTs = Math.floor(options.nowTs);
+    const query =
+      `(@status:{ACTIVE} @isHighIntent:{${highIntentTag}} ` +
+      `@startTs:[-inf ${nowTs}] @endTs:[(${nowTs} +inf])` +
+      `=>[KNN ${topL} @embedding $query_vec AS vector_distance]`;
+
+    try {
+      const raw = await this.ioredisClient.call(
+        'FT.SEARCH',
+        this.campaignDocumentVectorIndex,
+        query,
+        'PARAMS',
+        '2',
+        'query_vec',
+        vectorQuery,
+        'SORTBY',
+        'vector_distance',
+        'ASC',
+        'RETURN',
+        '2',
+        'campaignId',
+        'vector_distance',
+        'LIMIT',
+        '0',
+        String(topL),
+        'DIALECT',
+        '2'
+      );
+      return this.parseCampaignDocumentVectorSearchResults(raw);
+    } catch (error) {
+      this.logger.error('campaign-document ANN 검색 실패', error);
       return [];
     }
   }
@@ -518,11 +671,15 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     campaignId: string,
     tagName: string
   ): string {
-    return `${this.CAMPAIGN_TAG_VECTOR_PREFIX}${campaignId}:${encodeURIComponent(tagName)}`;
+    return `${this.campaignTagVectorPrefix}${campaignId}:${encodeURIComponent(tagName)}`;
   }
 
   private getCampaignTagVectorKeysSet(campaignId: string): string {
-    return `${this.CAMPAIGN_TAG_VECTOR_KEYS_PREFIX}${campaignId}`;
+    return `${this.campaignTagVectorKeysPrefix}${campaignId}`;
+  }
+
+  private getCampaignDocumentVectorDocKey(campaignId: string): string {
+    return `${this.campaignDocumentVectorPrefix}${campaignId}`;
   }
 
   private getPositiveIntEnv(name: string, defaultValue: number): number {
@@ -539,6 +696,14 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     return Buffer.from(floatArray.buffer);
   }
 
+  private assertEmbeddingDimension(values: number[], label: string): void {
+    if (values.length !== this.embeddingDimension) {
+      throw new Error(
+        `${label} embedding 차원 불일치: ${values.length} vs ${this.embeddingDimension}`
+      );
+    }
+  }
+
   private async ensureCampaignTagVectorIndex(): Promise<void> {
     if (this.campaignTagVectorIndexReady) {
       return this.campaignTagVectorIndexReady;
@@ -546,10 +711,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
 
     this.campaignTagVectorIndexReady = (async () => {
       try {
-        await this.ioredisClient.call(
-          'FT.INFO',
-          this.CAMPAIGN_TAG_VECTOR_INDEX
-        );
+        await this.ioredisClient.call('FT.INFO', this.campaignTagVectorIndex);
         return;
       } catch {
         // index가 없으면 아래에서 생성
@@ -558,12 +720,12 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       try {
         await this.ioredisClient.call(
           'FT.CREATE',
-          this.CAMPAIGN_TAG_VECTOR_INDEX,
+          this.campaignTagVectorIndex,
           'ON',
           'HASH',
           'PREFIX',
           '1',
-          this.CAMPAIGN_TAG_VECTOR_PREFIX,
+          this.campaignTagVectorPrefix,
           'SCHEMA',
           'campaignId',
           'TAG',
@@ -584,7 +746,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
           'TYPE',
           'FLOAT32',
           'DIM',
-          String(this.EMBEDDING_DIM),
+          String(this.embeddingDimension),
           'DISTANCE_METRIC',
           'COSINE',
           'M',
@@ -606,10 +768,83 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     return this.campaignTagVectorIndexReady;
   }
 
+  private async ensureCampaignDocumentVectorIndex(): Promise<void> {
+    if (this.campaignDocumentVectorIndexReady) {
+      return this.campaignDocumentVectorIndexReady;
+    }
+
+    this.campaignDocumentVectorIndexReady = this.ensureVectorIndex(
+      this.campaignDocumentVectorIndex,
+      this.campaignDocumentVectorPrefix
+    ).catch((error) => {
+      this.campaignDocumentVectorIndexReady = null;
+      throw error;
+    });
+    return this.campaignDocumentVectorIndexReady;
+  }
+
+  private async ensureVectorIndex(
+    indexName: string,
+    prefix: string
+  ): Promise<void> {
+    try {
+      await this.ioredisClient.call('FT.INFO', indexName);
+      return;
+    } catch {
+      // index가 없으면 아래에서 생성
+    }
+    try {
+      await this.ioredisClient.call(
+        'FT.CREATE',
+        indexName,
+        'ON',
+        'HASH',
+        'PREFIX',
+        '1',
+        prefix,
+        'SCHEMA',
+        'campaignId',
+        'TAG',
+        'status',
+        'TAG',
+        'isHighIntent',
+        'TAG',
+        'startTs',
+        'NUMERIC',
+        'endTs',
+        'NUMERIC',
+        'embedding',
+        'VECTOR',
+        'HNSW',
+        '10',
+        'TYPE',
+        'FLOAT32',
+        'DIM',
+        String(this.embeddingDimension),
+        'DISTANCE_METRIC',
+        'COSINE',
+        'M',
+        String(this.hnswGraphDegree),
+        'EF_CONSTRUCTION',
+        String(this.hnswEfConstruction)
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (!message.includes('Index already exists')) {
+        throw error;
+      }
+    }
+  }
+
   private async syncCampaignTagVectorDocs(
     campaign: CachedCampaign
   ): Promise<void> {
+    const compatible =
+      campaign.embeddingModelVersion === this.embeddingProfile.modelVersion ||
+      (this.embeddingProfile.name === 'legacy_minilm' &&
+        !campaign.embeddingModelVersion);
     if (
+      !compatible ||
       !campaign.tags ||
       campaign.tags.length === 0 ||
       !campaign.embeddingTags ||
@@ -630,7 +865,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
 
     for (const tagName of campaign.tags) {
       const embedding = campaign.embeddingTags[tagName];
-      if (!embedding || embedding.length !== this.EMBEDDING_DIM) {
+      if (!embedding || embedding.length !== this.embeddingDimension) {
         continue;
       }
 
@@ -664,6 +899,49 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
 
     pipeline.sadd(vectorKeysSet, ...activeTagKeys);
     await pipeline.exec();
+  }
+
+  private async syncCampaignDocumentVectorDoc(
+    campaign: CachedCampaign
+  ): Promise<void> {
+    const embedding = campaign.embeddingDocument;
+    const compatible =
+      campaign.embeddingModelVersion === this.embeddingProfile.modelVersion;
+    if (
+      !compatible ||
+      !embedding ||
+      embedding.length !== this.embeddingDimension
+    ) {
+      await this.deleteCampaignDocumentVectorDoc(campaign.id);
+      return;
+    }
+
+    await this.ensureCampaignDocumentVectorIndex();
+    const key = this.getCampaignDocumentVectorDocKey(campaign.id);
+    await this.ioredisClient.call(
+      'HSET',
+      key,
+      'campaignId',
+      campaign.id,
+      'status',
+      campaign.status,
+      'isHighIntent',
+      campaign.isHighIntent ? '1' : '0',
+      'startTs',
+      String(new Date(campaign.startDate).getTime()),
+      'endTs',
+      String(new Date(campaign.endDate).getTime()),
+      'embedding',
+      this.encodeFloat32Buffer(embedding)
+    );
+  }
+
+  private async deleteCampaignDocumentVectorDoc(
+    campaignId: string
+  ): Promise<void> {
+    await this.ioredisClient.del(
+      this.getCampaignDocumentVectorDocKey(campaignId)
+    );
   }
 
   private async deleteCampaignTagVectorDocs(campaignId: string): Promise<void> {
@@ -725,6 +1003,39 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       });
     }
 
+    return hits;
+  }
+
+  private parseCampaignDocumentVectorSearchResults(
+    raw: unknown
+  ): CampaignDocumentVectorSearchHit[] {
+    if (!Array.isArray(raw) || raw.length === 0) {
+      return [];
+    }
+
+    const hits: CampaignDocumentVectorSearchHit[] = [];
+    for (let i = 1; i < raw.length; i += 2) {
+      const fields = raw[i + 1];
+      if (!Array.isArray(fields)) continue;
+      const fieldMap = new Map<string, string>();
+      for (let j = 0; j < fields.length; j += 2) {
+        const key = fields[j];
+        const value = fields[j + 1];
+        if (typeof key === 'string') {
+          fieldMap.set(key, typeof value === 'string' ? value : String(value));
+        }
+      }
+      const campaignId = fieldMap.get('campaignId');
+      const distance = Number.parseFloat(
+        fieldMap.get('vector_distance') ?? 'NaN'
+      );
+      if (!campaignId || !Number.isFinite(distance)) continue;
+      hits.push({
+        campaignId,
+        distance,
+        similarity: Math.max(0, 1 - distance),
+      });
+    }
     return hits;
   }
 

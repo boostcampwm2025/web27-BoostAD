@@ -294,6 +294,7 @@ export class TransformerMatcher extends Matcher {
         return {
           ...campaign,
           embeddingTags: undefined,
+          embeddingDocument: undefined,
           similarity: coverage,
           score: exactMatchCount * 100 + coverage * 10,
           exactMatchCount,
@@ -533,6 +534,7 @@ export class TransformerMatcher extends Matcher {
     return {
       ...campaign,
       embeddingTags: undefined,
+      embeddingDocument: undefined,
       similarity,
       score: cpcScore + similarityScore,
     };
