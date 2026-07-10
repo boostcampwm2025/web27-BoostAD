@@ -1,6 +1,5 @@
 import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { Matcher } from './matcher.interface';
 import { CampaignCacheRepository } from '../../campaign/repository/campaign.cache.repository.interface';
 import {
   CampaignServingSnapshotService,
@@ -17,9 +16,15 @@ import {
   createRtbPathLogger,
   rtbPathLogsEnabled,
 } from '../../common/logging/rtb-path-logger.util';
+import { Matcher, type QualityRetrievalMode } from './matcher.interface';
+import {
+  fuseHybridRankings,
+  type RetrievalHit,
+} from '../retrieval/hybrid-retrieval.fusion';
 
 type MatchableCampaign = CachedCampaign | ServingCampaign;
 type DenseRetrievalMode = 'legacy_tag' | 'semantic_document';
+type RetrievalMode = 'dense_only' | 'shadow' | 'hybrid';
 
 @Injectable()
 export class TransformerMatcher extends Matcher {
@@ -61,6 +66,12 @@ export class TransformerMatcher extends Matcher {
   private readonly contextDecisionEnabled: boolean;
   private readonly denseRetrievalMode: DenseRetrievalMode;
   private readonly documentSimilarityThreshold: number;
+  private readonly retrievalMode: RetrievalMode;
+  private readonly hybridRrfK: number;
+  private readonly hybridDenseWeight: number;
+  private readonly hybridSparseWeight: number;
+  private readonly hybridSparseSupplementLimit: number;
+  private readonly hybridFinalLimit: number;
 
   constructor(
     private readonly campaignCacheRepo: CampaignCacheRepository,
@@ -119,6 +130,38 @@ export class TransformerMatcher extends Matcher {
     this.documentSimilarityThreshold = this.getNonNegativeFloatEnv(
       'RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD',
       0.3
+    );
+    const retrievalMode = this.configService.get<string>(
+      'RTB_RETRIEVAL_MODE',
+      'dense_only'
+    );
+    if (
+      retrievalMode !== 'dense_only' &&
+      retrievalMode !== 'shadow' &&
+      retrievalMode !== 'hybrid'
+    ) {
+      throw new Error(
+        `지원하지 않는 RTB_RETRIEVAL_MODE입니다: ${retrievalMode}`
+      );
+    }
+    // hybrid 승격은 품질·성능 gate 이후. 현재는 shadow와 동일하게 primary만 reserve한다.
+    this.retrievalMode = retrievalMode === 'hybrid' ? 'shadow' : retrievalMode;
+    this.hybridRrfK = this.getPositiveIntEnv('RTB_HYBRID_RRF_K', 60);
+    this.hybridDenseWeight = this.getNonNegativeFloatEnv(
+      'RTB_HYBRID_DENSE_WEIGHT',
+      1
+    );
+    this.hybridSparseWeight = this.getNonNegativeFloatEnv(
+      'RTB_HYBRID_SPARSE_WEIGHT',
+      0.2
+    );
+    this.hybridSparseSupplementLimit = this.getPositiveIntEnv(
+      'RTB_HYBRID_SPARSE_SUPPLEMENT_LIMIT',
+      10
+    );
+    this.hybridFinalLimit = this.getPositiveIntEnv(
+      'RTB_HYBRID_FINAL_LIMIT',
+      10
     );
   }
 
@@ -528,8 +571,308 @@ export class TransformerMatcher extends Matcher {
 
     if (candidates.length === 0) {
       this.metricsService.incRtbFallback('matcher_empty');
+    } else if (this.retrievalMode === 'shadow') {
+      await this.recordHybridShadow(
+        context,
+        requestEmbedding,
+        retainedHits,
+        candidates
+      );
     }
     return candidates;
+  }
+
+  async findQualityRankings(
+    context: DecisionContext,
+    mode: QualityRetrievalMode = 'dense_only'
+  ): Promise<ScoredCandidate[]> {
+    if (mode !== 'hybrid_shadow') {
+      return this.findCandidatesByTags(context);
+    }
+
+    const requestText = this.buildRequestText(context.tags);
+    const requestEmbedding = await this.resolveRequestEmbeddingForQuality(
+      context,
+      requestText
+    );
+    if (!requestEmbedding) {
+      return [];
+    }
+
+    const documentHits =
+      await this.campaignCacheRepo.searchCampaignDocumentVectors({
+        queryEmbedding: requestEmbedding,
+        topL: this.annTopL,
+        isHighIntent: context.isHighIntent,
+        nowTs: Date.now(),
+      });
+    const retainedHits = documentHits
+      .filter((hit) => hit.similarity >= this.documentSimilarityThreshold)
+      .slice(0, this.annTopM);
+    const ids = retainedHits.map((hit) => hit.campaignId);
+    const retrievedCampaigns = this.localSnapshotEnabled
+      ? await this.campaignServingSnapshot.findCampaignsByIds(ids)
+      : await this.campaignCacheRepo.findCampaignCachesByIds(ids);
+    const eligibleById = new Map(
+      this.filterEligibleCampaigns(
+        retrievedCampaigns,
+        context.isHighIntent,
+        false
+      ).map((campaign) => [campaign.id, campaign])
+    );
+    const primary = retainedHits.flatMap((hit) => {
+      const campaign = eligibleById.get(hit.campaignId);
+      return campaign ? [this.buildCandidate(campaign, hit.similarity)] : [];
+    });
+
+    const shadow = await this.buildHybridShadowCandidates(
+      context,
+      requestEmbedding,
+      retainedHits,
+      primary
+    );
+    return shadow.length > 0 ? shadow : primary;
+  }
+
+  private async resolveRequestEmbeddingForQuality(
+    context: DecisionContext,
+    requestText: string
+  ): Promise<number[] | null> {
+    if (this.contextDecisionEnabled && context.contextId) {
+      const ready = await this.contextEmbeddingService.resolveForDecision(
+        context.contextId
+      );
+      if (ready.status === 'READY' && ready.embedding?.length) {
+        return ready.embedding;
+      }
+    }
+    if (!this.mlEngine.isReady()) {
+      return null;
+    }
+    return this.mlEngine.getEmbedding(requestText, 'query');
+  }
+
+  private async recordHybridShadow(
+    context: DecisionContext,
+    requestEmbedding: number[],
+    denseHits: Array<{ campaignId: string; similarity: number }>,
+    primary: ScoredCandidate[]
+  ): Promise<void> {
+    const shadow = await this.buildHybridShadowCandidates(
+      context,
+      requestEmbedding,
+      denseHits,
+      primary
+    );
+    if (shadow.length === 0) {
+      this.metricsService.recordRtbHybridShadow('empty');
+      return;
+    }
+    this.metricsService.recordRtbHybridShadow('ok');
+    const primaryWinner = primary[0]?.id;
+    const shadowWinner = shadow[0]?.id;
+    if (primaryWinner && shadowWinner) {
+      this.metricsService.recordRtbHybridShadowWinnerAgreement(
+        primaryWinner === shadowWinner
+      );
+    }
+  }
+
+  private async buildHybridShadowCandidates(
+    context: DecisionContext,
+    requestEmbedding: number[],
+    denseHits: Array<{ campaignId: string; similarity: number }>,
+    primary: ScoredCandidate[]
+  ): Promise<ScoredCandidate[]> {
+    const sparseStartedAt = process.hrtime.bigint();
+    const sparseRanked = await this.rankSparseTagCandidates(context);
+    this.metricsService.observeRtbHybridSparseLookupDuration(
+      this.elapsedMs(sparseStartedAt) / 1000
+    );
+
+    const denseRetrievalHits: RetrievalHit[] = denseHits.map((hit) => ({
+      campaignId: hit.campaignId,
+      rawScore: hit.similarity,
+    }));
+    const sparseRetrievalHits: RetrievalHit[] = sparseRanked.map(
+      (candidate) => ({
+        campaignId: candidate.id,
+        rawScore: candidate.similarity,
+      })
+    );
+
+    const fusionStartedAt = process.hrtime.bigint();
+    const fused = fuseHybridRankings(denseRetrievalHits, sparseRetrievalHits, {
+      rrfK: this.hybridRrfK,
+      denseWeight: this.hybridDenseWeight,
+      sparseWeight: this.hybridSparseWeight,
+      limit: denseRetrievalHits.length + sparseRetrievalHits.length,
+    });
+    this.metricsService.observeRtbHybridFusionDuration(
+      this.elapsedMs(fusionStartedAt) / 1000
+    );
+    this.metricsService.recordRtbStage(
+      'match_hybrid_shadow_fusion',
+      fused.length > 0 ? 'ok' : 'fallback',
+      this.elapsedMs(fusionStartedAt)
+    );
+
+    if (fused.length === 0) {
+      return [];
+    }
+
+    const denseCandidates = fused.filter((item) => item.dense);
+    const sparseSupplements = fused
+      .filter((item) => !item.dense && item.sparse)
+      .slice(0, this.hybridSparseSupplementLimit);
+    const rerankPool = [...denseCandidates, ...sparseSupplements];
+    const rerankStartedAt = process.hrtime.bigint();
+    const rerankIds = rerankPool.map((item) => item.campaignId);
+    const hydratedPool = this.localSnapshotEnabled
+      ? await this.campaignServingSnapshot.findCampaignsByIds(rerankIds)
+      : await this.campaignCacheRepo.findCampaignCachesByIds(rerankIds);
+    const eligibleById = new Map(
+      this.filterEligibleCampaigns(
+        hydratedPool,
+        context.isHighIntent,
+        false
+      ).map((campaign) => [campaign.id, campaign])
+    );
+
+    const exactReranked = rerankPool.flatMap((item) => {
+      const campaign = eligibleById.get(item.campaignId);
+      const documentEmbedding = campaign?.embeddingDocument;
+      if (!campaign || !documentEmbedding?.length) {
+        return [];
+      }
+      const exactSimilarity = this.mlEngine.calculateSimilarity(
+        requestEmbedding,
+        documentEmbedding
+      );
+      if (exactSimilarity < this.documentSimilarityThreshold) {
+        return [];
+      }
+      const candidate = this.buildCandidate(campaign, exactSimilarity);
+      // Sparse는 semantic exact score를 뒤집는 주 신호가 아니라 근접 후보의
+      // tie-break 보너스로만 사용한다. 기본값에서 RRF 보너스는 1점 미만이다.
+      candidate.score += (item.sparse?.contribution ?? 0) * 100;
+      return [{ candidate, denseBacked: Boolean(item.dense) }];
+    });
+
+    const bestDenseScore = exactReranked
+      .filter((item) => item.denseBacked)
+      .reduce(
+        (best, item) => Math.max(best, item.candidate.score),
+        Number.NEGATIVE_INFINITY
+      );
+    if (!Number.isFinite(bestDenseScore)) {
+      return primary.slice(0, this.hybridFinalLimit);
+    }
+
+    // Sparse-only 후보는 Top-K를 보충할 수 있지만 winner는 Dense 후보가 맡는다.
+    for (const item of exactReranked) {
+      if (!item.denseBacked && item.candidate.score >= bestDenseScore) {
+        item.candidate.score = bestDenseScore - 1e-9;
+      }
+    }
+
+    // Shadow 단계에서는 sparse 보너스나 exact 재계산이 현재 Dense winner를
+    // 바꾸지 않는다. 개선 신호는 2~10위 후보 품질에서만 먼저 검증한다.
+    const denseWinner = [...primary].sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      if (right.maxCpc !== left.maxCpc) return right.maxCpc - left.maxCpc;
+      return left.id.localeCompare(right.id);
+    })[0];
+    const lockedWinner = exactReranked.find(
+      (item) => item.candidate.id === denseWinner?.id
+    );
+    if (lockedWinner) {
+      const bestOtherScore = exactReranked
+        .filter((item) => item !== lockedWinner)
+        .reduce(
+          (best, item) => Math.max(best, item.candidate.score),
+          Number.NEGATIVE_INFINITY
+        );
+      if (lockedWinner.candidate.score <= bestOtherScore) {
+        lockedWinner.candidate.score = bestOtherScore + 1e-9;
+      }
+    }
+
+    const result = exactReranked
+      .map((item) => item.candidate)
+      .sort((left, right) => {
+        if (right.score !== left.score) return right.score - left.score;
+        if (right.similarity !== left.similarity) {
+          return right.similarity - left.similarity;
+        }
+        if (right.maxCpc !== left.maxCpc) return right.maxCpc - left.maxCpc;
+        return left.id.localeCompare(right.id);
+      })
+      .slice(0, this.hybridFinalLimit);
+    this.metricsService.recordRtbStage(
+      'match_hybrid_shadow_exact_rerank',
+      result.length > 0 ? 'ok' : 'fallback',
+      this.elapsedMs(rerankStartedAt)
+    );
+    return result;
+  }
+
+  private async rankSparseTagCandidates(
+    context: DecisionContext
+  ): Promise<ScoredCandidate[]> {
+    const requestTags = new Set(
+      context.tags.map((tag) => this.normalizeText(tag)).filter(Boolean)
+    );
+    if (requestTags.size === 0 || !this.localSnapshotEnabled) {
+      return [];
+    }
+
+    const taggedCampaigns =
+      await this.campaignServingSnapshot.findCampaignsByTags([
+        ...requestTags,
+      ]);
+    const eligibleCampaigns = this.filterEligibleCampaigns(
+      taggedCampaigns,
+      context.isHighIntent,
+      false
+    );
+
+    return eligibleCampaigns
+      .map((campaign) => {
+        const campaignTags = new Set(
+          (campaign.tags ?? [])
+            .map((tag) => this.normalizeText(tag))
+            .filter(Boolean)
+        );
+        let exactMatchCount = 0;
+        for (const tag of requestTags) {
+          if (campaignTags.has(tag)) {
+            exactMatchCount += 1;
+          }
+        }
+        const coverage =
+          requestTags.size === 0 ? 0 : exactMatchCount / requestTags.size;
+        return {
+          campaign,
+          exactMatchCount,
+          coverage,
+        };
+      })
+      .filter((item) => item.exactMatchCount > 0)
+      .sort((a, b) => {
+        if (b.exactMatchCount !== a.exactMatchCount) {
+          return b.exactMatchCount - a.exactMatchCount;
+        }
+        if (b.coverage !== a.coverage) {
+          return b.coverage - a.coverage;
+        }
+        if (b.campaign.maxCpc !== a.campaign.maxCpc) {
+          return b.campaign.maxCpc - a.campaign.maxCpc;
+        }
+        return a.campaign.id.localeCompare(b.campaign.id);
+      })
+      .slice(0, this.lexicalTopM)
+      .map(({ campaign, coverage }) => this.buildCandidate(campaign, coverage));
   }
 
   private aggregateAnnTagHits(

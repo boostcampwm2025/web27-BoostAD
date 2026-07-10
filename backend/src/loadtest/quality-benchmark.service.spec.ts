@@ -44,7 +44,10 @@ describe('QualityBenchmarkService', () => {
     searchCampaignDocumentVectors: jest.Mock;
     reserveFirstAvailable: jest.Mock;
   };
-  let matcher: { findCandidatesByTags: jest.Mock };
+  let matcher: {
+    findCandidatesByTags: jest.Mock;
+    findQualityRankings: jest.Mock;
+  };
   let contextEmbeddingService: {
     completeJob: jest.Mock;
     clearReadyL1: jest.Mock;
@@ -89,14 +92,15 @@ describe('QualityBenchmarkService', () => {
       ),
       reserveFirstAvailable: jest.fn(),
     };
+    const scored = () =>
+      state.map((item) => ({
+        ...item,
+        similarity: 0.8,
+        score: 86,
+      }));
     matcher = {
-      findCandidatesByTags: jest.fn(async () =>
-        state.map((item) => ({
-          ...item,
-          similarity: 0.8,
-          score: 86,
-        }))
-      ),
+      findCandidatesByTags: jest.fn(async () => scored()),
+      findQualityRankings: jest.fn(async () => scored()),
     };
     contextEmbeddingService = {
       completeJob: jest.fn().mockResolvedValue(undefined),
@@ -218,6 +222,10 @@ describe('QualityBenchmarkService', () => {
         },
       ],
     });
+    expect(matcher.findQualityRankings).toHaveBeenCalledWith(
+      expect.objectContaining({ tags: ['React'] }),
+      'dense_only'
+    );
     expect(repository.reserveFirstAvailable).not.toHaveBeenCalled();
     expect(contextEmbeddingService.completeJob).toHaveBeenCalledTimes(1);
     expect(state[0]).toMatchObject({ dailySpent: 0, totalSpent: 0 });
@@ -225,7 +233,7 @@ describe('QualityBenchmarkService', () => {
 
   it('fails extraction when matcher-side behavior mutates campaign budget', async () => {
     const sessionId = await loadQualitySession();
-    matcher.findCandidatesByTags.mockImplementationOnce(async () => {
+    matcher.findQualityRankings.mockImplementationOnce(async () => {
       state[0] = { ...state[0], dailySpent: 100, totalSpent: 100 };
       return [{ ...state[0], similarity: 0.8, score: 86 }];
     });
@@ -270,7 +278,7 @@ describe('QualityBenchmarkService', () => {
 
   it('rejects foreign candidates instead of hiding isolation failures', async () => {
     const sessionId = await loadQualitySession();
-    matcher.findCandidatesByTags.mockResolvedValueOnce([
+    matcher.findQualityRankings.mockResolvedValueOnce([
       { ...campaign('foreign'), similarity: 0.9, score: 90 },
     ]);
 

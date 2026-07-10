@@ -26,6 +26,7 @@ type ContextObserveLabel = 'status';
 type ContextJobLabel = 'result';
 type ContextDecisionLabel = 'status';
 type ContextCacheLabel = 'result';
+type HybridShadowLabel = 'result';
 
 @Injectable()
 export class MetricsService {
@@ -242,6 +243,35 @@ export class MetricsService {
     buckets: [0, 1, 2, 5, 10, 20, 30, 50, 100, 200, 500, 1000],
     registers: [this.registry],
   });
+
+  private readonly rtbHybridShadowTotal = new Counter<HybridShadowLabel>({
+    name: 'boostad_rtb_hybrid_shadow_total',
+    help: 'Hybrid shadow ranking outcomes',
+    labelNames: ['result'],
+    registers: [this.registry],
+  });
+
+  private readonly rtbHybridSparseLookupDurationSeconds = new Histogram({
+    name: 'boostad_rtb_hybrid_sparse_lookup_duration_seconds',
+    help: 'Hybrid shadow sparse tag-index lookup duration',
+    buckets: [0.0001, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1],
+    registers: [this.registry],
+  });
+
+  private readonly rtbHybridFusionDurationSeconds = new Histogram({
+    name: 'boostad_rtb_hybrid_fusion_duration_seconds',
+    help: 'Hybrid shadow RRF fusion duration',
+    buckets: [0.00005, 0.0001, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025],
+    registers: [this.registry],
+  });
+
+  private readonly rtbHybridShadowWinnerAgreementTotal =
+    new Counter<HybridShadowLabel>({
+      name: 'boostad_rtb_hybrid_shadow_winner_agreement_total',
+      help: 'Whether hybrid shadow top-1 matches dense primary top-1',
+      labelNames: ['result'],
+      registers: [this.registry],
+    });
 
   private readonly rtbContextObserveTotal = new Counter<ContextObserveLabel>({
     name: 'boostad_rtb_context_observe_total',
@@ -493,6 +523,28 @@ export class MetricsService {
     if (Number.isFinite(candidateCount) && candidateCount >= 0) {
       this.rtbLexicalCandidateCount.observe(candidateCount);
     }
+  }
+
+  recordRtbHybridShadow(result: 'ok' | 'empty' | 'skipped') {
+    this.rtbHybridShadowTotal.inc({ result });
+  }
+
+  observeRtbHybridSparseLookupDuration(seconds: number) {
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      this.rtbHybridSparseLookupDurationSeconds.observe(seconds);
+    }
+  }
+
+  observeRtbHybridFusionDuration(seconds: number) {
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      this.rtbHybridFusionDurationSeconds.observe(seconds);
+    }
+  }
+
+  recordRtbHybridShadowWinnerAgreement(agreed: boolean) {
+    this.rtbHybridShadowWinnerAgreementTotal.inc({
+      result: agreed ? 'agree' : 'disagree',
+    });
   }
 
   recordRtbContextObserve(status: 'READY' | 'PENDING' | 'FAILED') {

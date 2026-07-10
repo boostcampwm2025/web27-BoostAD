@@ -8,6 +8,7 @@ import {
 } from './evaluate-rankings.mjs';
 import {
   chunk,
+  resolveRetrievalModes,
   toCampaignPayload,
   toContentPayload,
 } from './run-ranking-extraction.mjs';
@@ -199,6 +200,15 @@ test('ranking runner strips dataset-only fields from strict API payloads', () =>
 test('ranking runner creates complete deterministic batches', () => {
   assert.deepEqual(chunk([1, 2, 3, 4, 5], 2), [[1, 2], [3, 4], [5]]);
   assert.throws(() => chunk([1], 0), /positive integer/);
+});
+
+test('ranking runner resolves paired extraction in one loaded session', () => {
+  assert.deepEqual(resolveRetrievalModes('paired'), [
+    'dense_only',
+    'hybrid_shadow',
+  ]);
+  assert.deepEqual(resolveRetrievalModes('dense_only'), ['dense_only']);
+  assert.throws(() => resolveRetrievalModes('unknown'), /paired/);
 });
 
 test('quality evaluation reports scenario-level semantic failures', () => {

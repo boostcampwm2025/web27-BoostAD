@@ -198,7 +198,9 @@ export class CampaignService {
 
     if (existingJob) {
       const state = await existingJob.getState();
-      if (state !== 'failed') {
+      // active/waiting/delayed만 중복 방지. completed·failed·unknown 잔여 jobId는
+      // embedding이 비어 있어도 재큐를 막아 document ANN 재색인이 스킵될 수 있다.
+      if (state === 'active' || state === 'waiting' || state === 'delayed') {
         return false;
       }
       await existingJob.remove();
