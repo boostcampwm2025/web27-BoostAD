@@ -111,7 +111,10 @@ describe('CampaignService initial cache loading', () => {
     expect(failedJob.remove).toHaveBeenCalledTimes(1);
     expect(embeddingQueue.add).toHaveBeenCalledWith(
       'generate-campaign-embedding',
-      { campaignId: campaign.id },
+      {
+        campaignId: campaign.id,
+        modelVersion: 'Xenova/all-MiniLM-L6-v2@request-v1-mean-normalized',
+      },
       expect.objectContaining({
         jobId:
           'campaign-embedding-xenova-all-minilm-l6-v2-request-v1-mean-normalized-campaign-1',
@@ -141,7 +144,11 @@ describe('CampaignService initial cache loading', () => {
     );
     expect(embeddingQueue.add).toHaveBeenCalledWith(
       'generate-campaign-embedding',
-      { campaignId: campaign.id },
+      {
+        campaignId: campaign.id,
+        modelVersion:
+          'Xenova/multilingual-e5-small@retrieval-v1-mean-normalized',
+      },
       expect.objectContaining({
         jobId:
           'campaign-embedding-xenova-multilingual-e5-small-retrieval-v1-mean-normalized-campaign-1',

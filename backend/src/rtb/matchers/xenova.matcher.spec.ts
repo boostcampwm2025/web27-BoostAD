@@ -353,6 +353,42 @@ describe('TransformerMatcher ANN path', () => {
     ).toHaveBeenCalledWith('matcher_empty');
   });
 
+  it('uses bounded lexical fallback while the semantic index is empty', async () => {
+    const campaign = buildCampaign('c1', ['typescript'], {
+      typescript: [1, 0],
+    });
+    const repository = buildRepository([campaign]);
+    repository.searchCampaignDocumentVectors.mockResolvedValue([]);
+    const metrics = buildMetricsService();
+    const matcher = buildMatcher(
+      repository,
+      buildSnapshot([campaign]),
+      buildMlEngine(),
+      metrics,
+      buildConfigService({
+        RTB_MATCHER_ANN_ENABLED: 'true',
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_DENSE_RETRIEVAL_MODE: 'semantic_document',
+      })
+    );
+
+    const candidates = await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['typescript'],
+      postUrl: 'https://example.com/post',
+      behaviorScore: 50,
+      isHighIntent: false,
+    });
+
+    expect(candidates.map((candidate) => candidate.id)).toEqual(['c1']);
+    expect(
+      (metrics as unknown as { recordRtbLexicalFallback: jest.Mock })
+        .recordRtbLexicalFallback
+    ).toHaveBeenCalledWith('semantic_index_unready', 1);
+  });
+
   it('reuses request embedding cache for the same tag set regardless of order', async () => {
     const repository = buildRepository([]);
     repository.getAllCampaigns.mockResolvedValue([]);

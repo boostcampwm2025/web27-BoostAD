@@ -39,6 +39,7 @@ import {
   toEmbeddingNamespace,
   type EmbeddingProfile,
 } from 'src/rtb/ml/embedding-profile';
+import { EMBEDDING_QUEUE_NAME } from 'src/queue/queue.names';
 
 @Injectable()
 export class CampaignService {
@@ -52,7 +53,7 @@ export class CampaignService {
     private readonly campaignCacheRepository: CampaignCacheRepository,
     private readonly logRepository: LogRepository,
     @InjectDataSource() private readonly dataSource: DataSource,
-    @InjectQueue('embedding-queue')
+    @InjectQueue(EMBEDDING_QUEUE_NAME)
     private readonly embeddingQueue: Queue<EmbeddingJobData>,
     configService: ConfigService
   ) {
@@ -202,7 +203,7 @@ export class CampaignService {
 
     await this.embeddingQueue.add(
       'generate-campaign-embedding',
-      { campaignId },
+      { campaignId, modelVersion: this.embeddingProfile.modelVersion },
       {
         jobId,
         removeOnComplete: true,
@@ -286,6 +287,7 @@ export class CampaignService {
 
       await this.embeddingQueue.add('generate-campaign-embedding', {
         campaignId: campaign.id,
+        modelVersion: this.embeddingProfile.modelVersion,
       });
       this.logger.log(`캠페인 ${campaign.id} 임베딩 재생성 큐 추가`);
 
@@ -554,6 +556,7 @@ export class CampaignService {
         );
         await this.embeddingQueue.add('generate-campaign-embedding', {
           campaignId,
+          modelVersion: this.embeddingProfile.modelVersion,
         });
         this.logger.log(`캠페인 ${campaignId} 임베딩 재생성 큐 추가`);
       }

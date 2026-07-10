@@ -101,6 +101,26 @@ describe('EmbeddingWorker lifecycle', () => {
     expect(contextEmbeddingService.completeJob).toHaveBeenCalled();
   });
 
+  it('rejects a context job from another model namespace', async () => {
+    const { worker, mlEngine } = buildWorker(true);
+
+    await expect(
+      worker.process({
+        id: 'context-old',
+        name: 'generate-context-embedding',
+        data: {
+          contextId: `ctx_${'b'.repeat(64)}`,
+          contentHash: 'b'.repeat(64),
+          modelVersion: 'old-model',
+          text: '본문',
+        },
+        opts: { attempts: 1 },
+        attemptsMade: 0,
+      } as unknown as Job)
+    ).rejects.toThrow('context job model version 불일치');
+    expect(mlEngine.getEmbedding).not.toHaveBeenCalled();
+  });
+
   it('publishes campaign tag and document embeddings from passage inputs', async () => {
     const { worker, mlEngine, repository } = buildWorker(true);
     repository.findCampaignCacheById.mockResolvedValue({

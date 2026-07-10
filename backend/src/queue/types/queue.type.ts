@@ -3,6 +3,7 @@ import { BidStatus } from '../../bid-log/bid-log.types';
 
 export interface CampaignEmbeddingJobData {
   campaignId: string;
+  modelVersion?: string;
   text?: string; // 더 이상 사용하지 않음 (하위 호환성 유지)
 }
 

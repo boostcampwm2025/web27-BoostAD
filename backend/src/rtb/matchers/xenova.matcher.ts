@@ -281,6 +281,7 @@ export class TransformerMatcher extends Matcher {
       | EmbeddingPendingReason
       | 'model_not_ready'
       | 'cache_error'
+      | 'semantic_index_unready'
       | `context_${string}`
   ): Promise<ScoredCandidate[]> {
     const startedAt = process.hrtime.bigint();
@@ -474,6 +475,13 @@ export class TransformerMatcher extends Matcher {
       'ok',
       this.elapsedMs(annSearchStartedAt)
     );
+
+    if (documentHits.length === 0) {
+      return this.findCandidatesByLexicalFallback(
+        context,
+        'semantic_index_unready'
+      );
+    }
 
     const retainedHits = documentHits
       .filter((hit) => hit.similarity >= this.documentSimilarityThreshold)

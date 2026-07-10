@@ -338,7 +338,7 @@ run_worker_down() {
 }
 
 queue_wait_len() {
-  docker exec boostad-redis-master-local redis-cli LLEN bull:embedding-queue:wait 2>/dev/null || echo 0
+  redis_cli LLEN "$(embedding_queue_key wait)" 2>/dev/null || echo 0
 }
 
 run_queue_pressure() {

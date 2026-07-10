@@ -26,11 +26,26 @@ redis_cli() {
   docker exec boostad-redis-master-local redis-cli "$@"
 }
 
+embedding_queue_name() {
+  if [ -n "${RTB_EMBEDDING_QUEUE_NAME:-}" ]; then
+    printf '%s\n' "$RTB_EMBEDDING_QUEUE_NAME"
+  elif [ "${RTB_EMBEDDING_PROFILE:-legacy_minilm}" = "legacy_minilm" ]; then
+    printf '%s\n' 'embedding-queue'
+  else
+    printf 'embedding-queue-%s\n' "$RTB_EMBEDDING_PROFILE"
+  fi
+}
+
+embedding_queue_key() {
+  local state="$1"
+  printf 'bull:%s:%s\n' "$(embedding_queue_name)" "$state"
+}
+
 embedding_queue_counts() {
   local wait active delayed
-  wait="$(redis_cli LLEN bull:embedding-queue:wait 2>/dev/null || echo 0)"
-  active="$(redis_cli LLEN bull:embedding-queue:active 2>/dev/null || echo 0)"
-  delayed="$(redis_cli ZCARD bull:embedding-queue:delayed 2>/dev/null || echo 0)"
+  wait="$(redis_cli LLEN "$(embedding_queue_key wait)" 2>/dev/null || echo 0)"
+  active="$(redis_cli LLEN "$(embedding_queue_key active)" 2>/dev/null || echo 0)"
+  delayed="$(redis_cli ZCARD "$(embedding_queue_key delayed)" 2>/dev/null || echo 0)"
   printf '%s %s %s\n' "${wait:-0}" "${active:-0}" "${delayed:-0}"
 }
 
