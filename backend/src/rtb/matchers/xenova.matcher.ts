@@ -103,9 +103,13 @@ export class TransformerMatcher extends Matcher {
   }
 
   /**
-   * Redis에 저장된 캠페인 데이터들을 바탕으로 Active, IsHighIntent, 날짜 범위, 백테 유사도 비교값을 기반으로 후보 캠페인들 반환(예산 검증X)
-   * @param context
-   * @returns
+   * 후보 캠페인 조회 (예산 검증 X).
+   *
+   * Phase 3 분기 요약:
+   *  1) contextId + READY  → 글 embedding으로 ANN
+   *  2) contextId + PENDING/FAILED → lexical fallback (기다리지 않음)
+   *  3) contextId 없음 + cold-miss ON → tag L1/L2 hit면 ANN, miss면 lexical + background warm-up
+   *  4) cold-miss OFF → 기존처럼 resolve()로 runtime까지 await
    */
   async findCandidatesByTags(
     context: DecisionContext
@@ -115,6 +119,7 @@ export class TransformerMatcher extends Matcher {
     const requestTokens = new Set(this.tokenizeText(requestText));
 
     if (!this.mlEngine.isReady()) {
+      // 모델 로딩 전이라도 광고는 나가야 하면 태그 문자열 매칭으로 응답
       if (this.coldMissFastPathEnabled) {
         return this.findCandidatesByLexicalFallback(context, 'model_not_ready');
       }
@@ -128,6 +133,7 @@ export class TransformerMatcher extends Matcher {
     let requestEmbedding: number[];
     const requestEmbeddingStartedAt = process.hrtime.bigint();
     try {
+      // (1) SDK observe가 넘겨준 contextId 우선
       if (this.contextDecisionEnabled && context.contextId) {
         const contextResult =
           await this.contextEmbeddingService.resolveForDecision(
@@ -135,6 +141,7 @@ export class TransformerMatcher extends Matcher {
           );
         this.metricsService.recordRtbContextDecision(contextResult.status);
         if (contextResult.status !== 'READY') {
+          // 첫 방문 PENDING이 여기로 옴 → Xenova 대기 없이 lexical
           this.metricsService.recordRtbStage(
             'match_request_embedding',
             'fallback',
@@ -148,6 +155,7 @@ export class TransformerMatcher extends Matcher {
         requestEmbedding = contextResult.embedding;
         this.metricsService.incRtbEmbeddingSource('context');
       } else if (this.coldMissFastPathEnabled) {
+        // (2) 태그 캐시만 조회. miss면 pending + 백그라운드 생성, 이번 요청은 lexical
         const resolved =
           await this.requestEmbeddingCache.resolveCachedOrSchedule(requestText);
         if (resolved.status === 'pending') {
@@ -160,6 +168,7 @@ export class TransformerMatcher extends Matcher {
         }
         requestEmbedding = resolved.embedding;
       } else {
+        // (3) flag off: 캐시 miss여도 runtime까지 기다림 (구 Phase 3A 동기 경로)
         requestEmbedding = await this.getEmbeddingCached(requestText);
       }
       this.metricsService.recordRtbStage(
@@ -167,7 +176,6 @@ export class TransformerMatcher extends Matcher {
         'ok',
         this.elapsedMs(requestEmbeddingStartedAt)
       );
-      // requestEmbedding = await this.mlEngine.getEmbedding(requestText);
     } catch (error) {
       if (this.coldMissFastPathEnabled) {
         this.metricsService.recordRtbStage(
@@ -242,6 +250,11 @@ export class TransformerMatcher extends Matcher {
     );
   }
 
+  /**
+   * Transformer/ANN을 우회하는 태그 문자열 fast path.
+   * local snapshot 역인덱스에서 태그 교집합 캠페인을 모아
+   * exact match 수 → coverage → CPC 순으로 top-M을 고른다.
+   */
   private async findCandidatesByLexicalFallback(
     context: DecisionContext,
     reason:
@@ -254,6 +267,7 @@ export class TransformerMatcher extends Matcher {
     const requestTags = new Set(
       context.tags.map((tag) => this.normalizeText(tag)).filter(Boolean)
     );
+    // Redis hydrate 없이 프로세스 로컬 역인덱스만 조회
     const indexedCampaigns =
       await this.campaignServingSnapshot.findCampaignsByTags([...requestTags]);
     const eligibleCampaigns = this.filterEligibleCampaigns(

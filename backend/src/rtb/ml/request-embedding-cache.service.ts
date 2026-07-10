@@ -110,6 +110,10 @@ export class RequestEmbeddingCacheService {
     };
   }
 
+  /**
+   * [동기 경로] 벡터가 꼭 필요할 때 사용.
+   * L1 → single-flight → L2(budget) → 없으면 runtime까지 await 해서 반드시 embedding을 반환.
+   */
   async resolve(text: string): Promise<EmbeddingResolveResult> {
     const cacheKey = this.buildCacheKey(text);
     const l1Hit = this.getFromL1(cacheKey);
@@ -121,6 +125,7 @@ export class RequestEmbeddingCacheService {
 
     this.metricsService.incRtbEmbeddingL1Miss();
 
+    // 같은 key가 이미 생성 중이면 Xenova를 또 돌리지 않고 그 Promise만 기다림
     const existing = this.inFlight.get(cacheKey);
     if (existing) {
       this.metricsService.incRtbEmbeddingSingleflightWait();
@@ -150,6 +155,12 @@ export class RequestEmbeddingCacheService {
     }
   }
 
+  /**
+   * [비차단 경로 / Phase 3B] decision 스레드가 runtime을 기다리면 안 될 때 사용.
+   * - L1/L2 hit → ready (바로 ANN 가능)
+   * - miss/timeout/in-flight → pending만 반환 + background에서 생성 예약
+   * Matcher는 pending이면 lexical fallback으로 즉시 응답한다.
+   */
   async resolveCachedOrSchedule(
     text: string
   ): Promise<EmbeddingCacheProbeResult> {
@@ -167,6 +178,7 @@ export class RequestEmbeddingCacheService {
     }
 
     this.metricsService.incRtbEmbeddingL1Miss();
+    // 이미 누군가 생성 중 → 이번 요청은 기다리지 않고 pending
     if (this.inFlight.has(cacheKey)) {
       this.metricsService.recordRtbEmbeddingBackground('deduplicated');
       return { status: 'pending', reason: 'in-flight', cacheKey };
@@ -188,6 +200,7 @@ export class RequestEmbeddingCacheService {
       pendingReason = l2.status;
     }
 
+    // 후속 요청을 위해 뒤에서만 warm-up. 이번 decision은 pending으로 끝낸다.
     this.startBackgroundGeneration(text, cacheKey);
     return { status: 'pending', reason: pendingReason, cacheKey };
   }
@@ -223,6 +236,10 @@ export class RequestEmbeddingCacheService {
     return { embedding, source: 'runtime' };
   }
 
+  /**
+   * cold miss warm-up. API 프로세스를 다시 포화시키지 않도록
+   * 동시성/큐 상한을 두고, 초과분은 dropped 처리한다(decision은 이미 lexical로 응답됨).
+   */
   private startBackgroundGeneration(text: string, cacheKey: string): void {
     if (this.inFlight.has(cacheKey)) {
       this.metricsService.recordRtbEmbeddingBackground('deduplicated');

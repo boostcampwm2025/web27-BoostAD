@@ -70,6 +70,8 @@ export class BoostAdSDK {
     isHighIntent: boolean
   ): Promise<void> {
     try {
+      // decision에는 observe에서 받은 contextId를 같이 넘긴다.
+      // READY면 semantic path, PENDING/없음이면 서버가 lexical/tag로 fallback.
       const data = await this.apiClient.fetchDecision(
         tags,
         postUrl,
@@ -117,6 +119,8 @@ export class BoostAdSDK {
 
     const tags = this.tagExtractor.extract();
     const postUrl = window.location.href;
+    // Phase 3: decision 전에 observe를 먼저 호출한다.
+    // embedding READY를 기다리지 않고 contextId만 받아 둔 뒤, 바로 아래 decision으로 진행한다.
     await this.ensureContextObserved(tags, postUrl);
 
     // 1차 광고: 본문 상단에 삽입
@@ -230,10 +234,17 @@ export class BoostAdSDK {
     return null;
   }
 
+  /**
+   * 글 본문 embedding 사전 준비(observe).
+   * - decision보다 먼저 호출되지만, worker 완료까지 block하지 않는다.
+   * - 보통 첫 응답은 PENDING + contextId, 같은 글 재방문/2차 광고부터 READY를 기대한다.
+   * - observe 실패 시 contextId=undefined → decision은 tag 경로만 사용.
+   */
   private async ensureContextObserved(
     tags: Tag[],
     postUrl: string
   ): Promise<void> {
+    // 같은 글에서는 observe를 한 번만 수행
     if (this.contextUrl === postUrl) {
       return;
     }

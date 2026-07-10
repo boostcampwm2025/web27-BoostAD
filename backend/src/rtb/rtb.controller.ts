@@ -35,6 +35,10 @@ export class RTBController {
     private readonly contextEmbeddingService: ContextEmbeddingService
   ) {}
 
+  /**
+   * 글 단위 embedding 사전 준비 API (SDK가 decision 직전에 호출).
+   * READY/PENDING/FAILED + contextId만 즉시 반환하고, 실제 벡터 생성은 worker가 비동기로 수행한다.
+   */
   @Post('context/observe')
   async observeContext(@Body() body: ContextObserveDto) {
     const state = await this.contextEmbeddingService.observe({
@@ -50,6 +54,10 @@ export class RTBController {
     };
   }
 
+  /**
+   * RTB 광고 선정. body.contextId가 있으면 READY일 때만 semantic path,
+   * 없거나 PENDING이면 Matcher가 lexical/tag fallback으로 응답한다.
+   */
   @Post('decision')
   async getDecision(
     @Body() body: RTBRequestDto,

@@ -84,18 +84,26 @@ export class ContextEmbeddingService {
     );
   }
 
+  /**
+   * 글(title/body/tags) embedding을 비동기로 준비한다.
+   * decision을 block하지 않는 것이 목적:
+   *   READY면 contextId 재사용,
+   *   없으면 PENDING 저장 + BullMQ job enqueue 후 즉시 반환.
+   */
   async observe(input: ContextObserveInput): Promise<ContextEmbeddingState> {
     const canonical = this.canonicalize(input);
     if (!canonical.embeddingText) {
       throw new BadRequestException('title, body, tags 중 하나는 필요합니다.');
     }
     const modelVersion = this.mlEngine.getModelVersion();
+    // 같은 글+모델이면 항상 같은 contentHash/contextId
     const contentHash = createHash('sha256')
       .update(canonical.serialized)
       .digest('hex');
     const contextId = this.buildContextId(contentHash);
     const stateKey = this.buildStateKey(modelVersion, contentHash);
     const existing = await this.readState(stateKey);
+    // 이미 준비됨 → decision에서 바로 semantic 사용 가능
     if (existing?.status === 'READY') {
       if (this.isValidEmbedding(existing.embedding)) {
         this.setReadyL1(stateKey, existing.embedding);
@@ -103,12 +111,14 @@ export class ContextEmbeddingService {
       this.metricsService.recordRtbContextObserve(existing.status);
       return existing;
     }
+    // 생성 중 → job을 또 넣지 않고 같은 PENDING 반환
     if (existing?.status === 'PENDING') {
       this.metricsService.recordRtbContextObserve(existing.status);
       this.metricsService.recordRtbContextJob('deduplicated');
       return existing;
     }
 
+    // 멀티 인스턴스에서 동시에 observe해도 job은 1번만 (SET NX + deterministic jobId)
     const lockKey = this.buildJobLockKey(modelVersion, contentHash);
     const claimed = await this.redis.set(
       lockKey,
@@ -142,6 +152,7 @@ export class ContextEmbeddingService {
       text: canonical.embeddingText,
     };
     try {
+      // worker가 이 job을 받아 Xenova 실행 후 READY로 승격
       await this.embeddingQueue.add('generate-context-embedding', job, {
         jobId: this.buildJobId(modelVersion, contentHash),
         removeOnComplete: true,
@@ -181,6 +192,10 @@ export class ContextEmbeddingService {
     );
   }
 
+  /**
+   * decision용 조회. embedding 생성을 기다리지 않고,
+   * READY면 벡터, 아니면 PENDING/FAILED/MISS/TIMEOUT을 즉시 반환한다.
+   */
   async resolveForDecision(contextId: string): Promise<ContextDecisionResult> {
     const contentHash = this.parseContextId(contextId);
     if (!contentHash) {

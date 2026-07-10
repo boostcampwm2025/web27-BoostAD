@@ -78,6 +78,7 @@ export class DecisionAPIClient implements APIClient {
     title?: string,
     body?: string
   ): Promise<string | undefined> {
+    // decision 직전 pre-warm. FAILED/네트워크 에러면 undefined → tag-only decision
     const requestBody: ContextObserveRequest = {
       blogKey: this.config.blogKey,
       postUrl,

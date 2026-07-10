@@ -65,3 +65,32 @@ services:
     cpus: ${BACKEND_CPUS:-2.0}
     mem_limit: ${BACKEND_MEM_LIMIT:-4g}
     pids_limit: ${BACKEND_PIDS_LIMIT:-256}
+
+  backend-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
+    container_name: boostad-backend-worker-local
+    command: node dist/worker.main.js
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DB_HOST: mysql
+      DB_PORT: '3306'
+      DB_USERNAME: ${DB_USERNAME:-test_user}
+      DB_PASSWORD: ${DB_PASSWORD:-test_user}
+      DB_DATABASE: ${DB_DATABASE:-test_db}
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
+      JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret}
+      RTB_CONTEXT_MAX_BODY_CHARS: ${RTB_CONTEXT_MAX_BODY_CHARS:-8000}
+      RTB_CONTEXT_READY_TTL_SECONDS: ${RTB_CONTEXT_READY_TTL_SECONDS:-604800}
+      RTB_CONTEXT_PENDING_TTL_SECONDS: ${RTB_CONTEXT_PENDING_TTL_SECONDS:-600}
+      RTB_CONTEXT_JOB_LOCK_TTL_SECONDS: ${RTB_CONTEXT_JOB_LOCK_TTL_SECONDS:-600}
+    depends_on:
+      - mysql
+      - redis
+    networks:
+      - boostad-local
+    restart: unless-stopped
+    cpus: ${BACKEND_WORKER_CPUS:-2.0}
+    mem_limit: ${BACKEND_WORKER_MEM_LIMIT:-4g}

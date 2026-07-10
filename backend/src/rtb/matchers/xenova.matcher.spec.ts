@@ -550,6 +550,181 @@ describe('TransformerMatcher ANN path', () => {
     );
   });
 
+  it('3B-M3: lexical rank prefers more exact matches then higher CPC on ties', async () => {
+    // coverage = exact/requestSize 이므로 exact가 같으면 coverage도 같다 → CPC tie-break
+    const twoExact = {
+      ...buildCampaign('c-exact2', ['react', 'nestjs'], {}),
+      maxCpc: 10,
+    };
+    const oneExactLowCpc = {
+      ...buildCampaign('c-low', ['react'], {}),
+      maxCpc: 10,
+    };
+    const oneExactHighCpc = {
+      ...buildCampaign('c-high', ['react', 'redis'], {}),
+      maxCpc: 999,
+    };
+    const campaigns = [oneExactLowCpc, oneExactHighCpc, twoExact];
+    const matcher = buildMatcher(
+      buildRepository(campaigns),
+      buildSnapshot(campaigns),
+      buildMlEngine(),
+      buildMetricsService(),
+      buildConfigService({
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_EMBEDDING_COLD_MISS_FAST_PATH_ENABLED: 'true',
+      })
+    );
+
+    const candidates = await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['react', 'nestjs'],
+      postUrl: 'https://example.com/post',
+      behaviorScore: 20,
+      isHighIntent: false,
+    });
+
+    expect(candidates.map((c) => c.id)).toEqual([
+      'c-exact2',
+      'c-high',
+      'c-low',
+    ]);
+  });
+
+  it('3B-M4: campaigns without embeddingTags remain lexical candidates', async () => {
+    const campaign = buildCampaign('c1', ['react'], {});
+    delete (campaign as { embeddingTags?: unknown }).embeddingTags;
+    const matcher = buildMatcher(
+      buildRepository([campaign]),
+      buildSnapshot([campaign]),
+      buildMlEngine(),
+      buildMetricsService(),
+      buildConfigService({
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_EMBEDDING_COLD_MISS_FAST_PATH_ENABLED: 'true',
+      })
+    );
+
+    const candidates = await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['react'],
+      postUrl: 'https://example.com/post',
+      behaviorScore: 20,
+      isHighIntent: false,
+    });
+    expect(candidates.map((c) => c.id)).toEqual(['c1']);
+  });
+
+  it('3B-M5: no tag overlap yields empty matcher candidates', async () => {
+    const campaign = buildCampaign('c1', ['redis'], {});
+    const metrics = buildMetricsService();
+    const matcher = buildMatcher(
+      buildRepository([campaign]),
+      buildSnapshot([campaign]),
+      buildMlEngine(),
+      metrics,
+      buildConfigService({
+        RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+        RTB_EMBEDDING_COLD_MISS_FAST_PATH_ENABLED: 'true',
+      })
+    );
+
+    const candidates = await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['react'],
+      postUrl: 'https://example.com/post',
+      behaviorScore: 20,
+      isHighIntent: false,
+    });
+    expect(candidates).toEqual([]);
+    expect(
+      (metrics as unknown as { incRtbFallback: jest.Mock }).incRtbFallback
+    ).toHaveBeenCalledWith('matcher_empty');
+  });
+
+  it('3B-M6: cold-miss flag off awaits runtime resolve path', async () => {
+    const repository = buildRepository([]);
+    repository.getAllCampaigns.mockResolvedValue([]);
+    const mlEngine = buildMlEngine() as unknown as {
+      getEmbedding: jest.Mock;
+    };
+    const metrics = buildMetricsService();
+    const matcher = buildMatcher(
+      repository,
+      buildSnapshot([]),
+      mlEngine as unknown as MLEngine,
+      metrics,
+      buildConfigService({
+        RTB_MATCHER_ANN_ENABLED: 'false',
+        RTB_EMBEDDING_COLD_MISS_FAST_PATH_ENABLED: 'false',
+      })
+    );
+
+    await matcher.findCandidatesByTags({
+      blogKey: 'blog',
+      blogId: 1,
+      blogName: 'blog',
+      tags: ['unique-cold-flag-off'],
+      postUrl: 'https://example.com/post',
+      behaviorScore: 20,
+      isHighIntent: false,
+    });
+
+    expect(mlEngine.getEmbedding).toHaveBeenCalledTimes(1);
+    expect(
+      (metrics as unknown as { recordRtbLexicalFallback: jest.Mock })
+        .recordRtbLexicalFallback
+    ).not.toHaveBeenCalled();
+    expect(
+      (metrics as unknown as { incRtbEmbeddingSource: jest.Mock })
+        .incRtbEmbeddingSource
+    ).toHaveBeenCalledWith('runtime');
+  });
+
+  it('3D-M3: FAILED and TIMEOUT context fall back to lexical', async () => {
+    const campaign = buildCampaign('c1', ['react'], {});
+    for (const status of ['FAILED', 'TIMEOUT'] as const) {
+      const metrics = buildMetricsService();
+      const mlEngine = buildMlEngine() as unknown as { getEmbedding: jest.Mock };
+      const matcher = buildMatcher(
+        buildRepository([campaign]),
+        buildSnapshot([campaign]),
+        mlEngine as unknown as MLEngine,
+        metrics,
+        buildConfigService({
+          RTB_CAMPAIGN_SOURCE: 'local_snapshot',
+          RTB_EMBEDDING_COLD_MISS_FAST_PATH_ENABLED: 'true',
+          RTB_CONTEXT_DECISION_ENABLED: 'true',
+        }),
+        {
+          resolveForDecision: jest.fn().mockResolvedValue({ status }),
+        } as unknown as ContextEmbeddingService
+      );
+      const candidates = await matcher.findCandidatesByTags({
+        blogKey: 'blog',
+        blogId: 1,
+        blogName: 'blog',
+        tags: ['react'],
+        contextId: `ctx_${status.padEnd(64, 'a').slice(0, 64)}`,
+        postUrl: 'https://example.com/post',
+        behaviorScore: 20,
+        isHighIntent: false,
+      });
+      expect(candidates.map((c) => c.id)).toEqual(['c1']);
+      expect(mlEngine.getEmbedding).not.toHaveBeenCalled();
+      expect(
+        (metrics as unknown as { recordRtbLexicalFallback: jest.Mock })
+          .recordRtbLexicalFallback
+      ).toHaveBeenCalledWith(`context_${status.toLowerCase()}`, 1);
+    }
+  });
+
   it('hydrates ANN candidates from the local snapshot when enabled', async () => {
     const campaign = buildCampaign('c1', ['typescript'], {
       typescript: [1, 0],
