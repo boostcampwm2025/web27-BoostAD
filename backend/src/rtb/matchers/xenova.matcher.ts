@@ -2,6 +2,10 @@ import { Injectable } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { Matcher } from './matcher.interface';
 import { CampaignCacheRepository } from '../../campaign/repository/campaign.cache.repository.interface';
+import {
+  CampaignServingSnapshotService,
+  type ServingCampaign,
+} from '../../campaign/campaign-serving-snapshot.service';
 import { MLEngine } from '../ml/mlEngine.interface';
 import type { DecisionContext, ScoredCandidate } from '../types/decision.types';
 import type { CachedCampaign } from '../../campaign/types/campaign.types';
@@ -10,6 +14,8 @@ import {
   createRtbPathLogger,
   rtbPathLogsEnabled,
 } from '../../common/logging/rtb-path-logger.util';
+
+type MatchableCampaign = CachedCampaign | ServingCampaign;
 
 @Injectable()
 export class TransformerMatcher extends Matcher {
@@ -48,9 +54,11 @@ export class TransformerMatcher extends Matcher {
   private readonly annTopL: number;
   private readonly annTopM: number;
   private readonly annMaxTagHitsPerCampaign: number;
+  private readonly localSnapshotEnabled: boolean;
 
   constructor(
     private readonly campaignCacheRepo: CampaignCacheRepository,
+    private readonly campaignServingSnapshot: CampaignServingSnapshotService,
     private readonly mlEngine: MLEngine,
     private readonly metricsService: MetricsService,
     private readonly configService: ConfigService
@@ -65,6 +73,15 @@ export class TransformerMatcher extends Matcher {
       'RTB_MATCHER_ANN_PER_CAMPAIGN_HIT_LIMIT',
       3
     );
+    const campaignSource = this.configService.get<string>(
+      'RTB_CAMPAIGN_SOURCE'
+    );
+    this.localSnapshotEnabled = campaignSource
+      ? campaignSource === 'local_snapshot'
+      : this.configService.get<string>(
+          'RTB_MATCHER_LOCAL_SNAPSHOT_ENABLED',
+          'false'
+        ) === 'true';
   }
 
   /**
@@ -94,14 +111,14 @@ export class TransformerMatcher extends Matcher {
       // 요청 임베딩은 모든 캠페인 비교에서 공통으로 사용되므로 한 번만 계산합니다.
       requestEmbedding = await this.getEmbeddingCached(requestText);
       this.metricsService.recordRtbStage(
-        'match_get_request_embedding',
+        'match_request_embedding',
         'ok',
         this.elapsedMs(requestEmbeddingStartedAt)
       );
       // requestEmbedding = await this.mlEngine.getEmbedding(requestText);
     } catch (error) {
       this.metricsService.recordRtbStage(
-        'match_get_request_embedding',
+        'match_request_embedding',
         'error',
         this.elapsedMs(requestEmbeddingStartedAt)
       );
@@ -221,10 +238,17 @@ export class TransformerMatcher extends Matcher {
     }
 
     const loadRetrievedStartedAt = process.hrtime.bigint();
-    const retrievedCampaigns =
-      await this.campaignCacheRepo.findCampaignCachesByIds(retrievedCampaignIds);
+    const retrievedCampaigns = this.localSnapshotEnabled
+      ? await this.campaignServingSnapshot.findCampaignsByIds(
+          retrievedCampaignIds
+        )
+      : await this.campaignCacheRepo.findCampaignCachesByIds(
+          retrievedCampaignIds
+        );
     this.metricsService.recordRtbStage(
-      'match_load_retrieved_campaigns',
+      this.localSnapshotEnabled
+        ? 'match_campaign_hydrate_snapshot'
+        : 'match_campaign_hydrate_redis',
       'ok',
       this.elapsedMs(loadRetrievedStartedAt)
     );
@@ -274,7 +298,9 @@ export class TransformerMatcher extends Matcher {
         const coverage = this.clamp01(
           sorted.length / this.annMaxTagHitsPerCampaign
         );
-        const retrievalScore = this.clamp01(topWeighted * 0.85 + coverage * 0.15);
+        const retrievalScore = this.clamp01(
+          topWeighted * 0.85 + coverage * 0.15
+        );
 
         return { campaignId, retrievalScore };
       })
@@ -300,7 +326,7 @@ export class TransformerMatcher extends Matcher {
   }
 
   private async scoreEligibleCampaigns(
-    eligibleCampaigns: CachedCampaign[],
+    eligibleCampaigns: MatchableCampaign[],
     requestEmbedding: number[],
     requestNorm: string,
     requestTokens: Set<string>,
@@ -324,13 +350,13 @@ export class TransformerMatcher extends Matcher {
         }
       }
       this.metricsService.recordRtbStage(
-        'match_score_loop',
+        'match_exact_rerank',
         'ok',
         this.elapsedMs(scoreLoopStartedAt)
       );
     } catch (error) {
       this.metricsService.recordRtbStage(
-        'match_score_loop',
+        'match_exact_rerank',
         'error',
         this.elapsedMs(scoreLoopStartedAt)
       );
@@ -347,7 +373,7 @@ export class TransformerMatcher extends Matcher {
   }
 
   private buildCandidate(
-    campaign: CachedCampaign,
+    campaign: MatchableCampaign,
     similarity: number
   ): ScoredCandidate {
     const cpcScore = campaign.maxCpc * this.CPC_WEIGHT;
@@ -355,6 +381,7 @@ export class TransformerMatcher extends Matcher {
 
     return {
       ...campaign,
+      embeddingTags: undefined,
       similarity,
       score: cpcScore + similarityScore,
     };
@@ -362,19 +389,20 @@ export class TransformerMatcher extends Matcher {
 
   // 요청 태그 배열을 임베딩을 위한 단일 텍스트로 변환합니다.
   private buildRequestText(tags: string[]): string {
-    const canonicalTags = [...new Set(tags.map((tag) => tag.trim()).filter(Boolean))]
-      .sort((a, b) =>
-        this.normalizeText(a).localeCompare(this.normalizeText(b))
-      );
+    const canonicalTags = [
+      ...new Set(tags.map((tag) => tag.trim()).filter(Boolean)),
+    ].sort((a, b) =>
+      this.normalizeText(a).localeCompare(this.normalizeText(b))
+    );
 
     return canonicalTags.join(' ');
   }
 
   // 비딩 자격 필터링: ACTIVE + 날짜 범위 + deletedAt + embeddingTags 존재
   private filterEligibleCampaigns(
-    campaigns: CachedCampaign[],
+    campaigns: MatchableCampaign[],
     isHighIntent: boolean
-  ): CachedCampaign[] {
+  ): MatchableCampaign[] {
     const now = new Date();
 
     return campaigns.filter((campaign) => {
@@ -492,7 +520,7 @@ export class TransformerMatcher extends Matcher {
     requestEmbedding: number[],
     requestNorm: string,
     requestTokens: Set<string>,
-    campaign: CachedCampaign
+    campaign: MatchableCampaign
   ): Promise<number> {
     // CachedCampaign의 tags는 string[] 형태
     const tagNames = (campaign.tags ?? []).filter(Boolean);
@@ -522,7 +550,7 @@ export class TransformerMatcher extends Matcher {
 
       try {
         // Redis에 이미 캐싱된 임베딩을 우선 사용 (Worker가 생성)
-        let tagEmbedding: number[];
+        let tagEmbedding: ArrayLike<number>;
 
         if (campaign.embeddingTags && campaign.embeddingTags[tagName]) {
           // Redis에 이미 임베딩이 있으면 바로 사용

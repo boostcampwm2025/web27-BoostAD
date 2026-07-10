@@ -17,7 +17,10 @@ export abstract class MLEngine {
    * @param vecB - 두 번째 벡터
    * @returns 유사도 (0.0 ~ 1.0)
    */
-  abstract calculateSimilarity(vecA: number[], vecB: number[]): number;
+  abstract calculateSimilarity(
+    vecA: ArrayLike<number>,
+    vecB: ArrayLike<number>
+  ): number;
 
   /**
    * 두 텍스트 간의 유사도를 직접 계산 (헬퍼 메서드)

@@ -63,14 +63,20 @@ export class XenovaMLEngine extends MLEngine implements OnApplicationBootstrap {
   }
 
   // 두 벡터 간의 코사인 유사도를 계산합니다.
-  calculateSimilarity(vecA: number[], vecB: number[]): number {
+  calculateSimilarity(
+    vecA: ArrayLike<number>,
+    vecB: ArrayLike<number>
+  ): number {
     if (vecA.length !== vecB.length) {
       throw new Error(
         `Vector 차원이 일치해야 유사도 비교가 가능합니다.: ${vecA.length} vs ${vecB.length}`
       );
     }
 
-    const dotProduct = vecA.reduce((sum, a, i) => sum + a * vecB[i], 0);
+    let dotProduct = 0;
+    for (let index = 0; index < vecA.length; index++) {
+      dotProduct += vecA[index] * vecB[index];
+    }
     return Math.max(0, Math.min(1, dotProduct));
   }
 

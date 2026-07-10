@@ -1,4 +1,5 @@
 import { ConfigService } from '@nestjs/config';
+import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { AppIORedisClient } from 'src/redis/redis.type';
 import { RedisCampaignCacheRepository } from './redis-campaign.cache.repository';
 
@@ -12,7 +13,11 @@ describe('RedisCampaignCacheRepository winner-only reservation', () => {
     } as unknown as ConfigService;
 
     return {
-      repository: new RedisCampaignCacheRepository(redis, config),
+      repository: new RedisCampaignCacheRepository(
+        redis,
+        config,
+        new EventEmitter2()
+      ),
       redis,
     };
   };
