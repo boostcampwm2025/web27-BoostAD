@@ -130,12 +130,12 @@
             "uid": "PBFA97CFB590B2093"
           },
           "editorMode": "code",
-          "expr": "sum(rate(boostad_rtb_fallback_total{job=\"backend-app\"}[1m])) / clamp_min(sum(rate(boostad_rtb_requests_total{job=\"backend-app\"}[1m])), 1e-9)",
+          "expr": "((sum(rate(boostad_rtb_requests_total{job=\"backend-app\",result=\"fallback\"}[1m])) ) or on() vector(0)) / clamp_min(((sum(rate(boostad_rtb_requests_total{job=\"backend-app\"}[1m])) ) or on() vector(0)), 1e-9)",
           "range": true,
           "refId": "A"
         }
       ],
-      "title": "폴백 비율 (Fallback Ratio)",
+      "title": "폴백 요청 비율 (Fallback Request Ratio)",
       "type": "stat"
     },
     {
@@ -446,7 +446,7 @@
           "refId": "A"
         }
       ],
-      "title": "폴백 사유별 발생량 (Fallback Reasons)",
+      "title": "폴백 이벤트 사유별 발생량 (Fallback Reason Events)",
       "type": "timeseries"
     },
     {
@@ -1086,6 +1086,155 @@
       ],
       "title": "BidLog Queue 상태별 Job 수 (Queue Jobs by State)",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "palette-classic"
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 18,
+        "x": 0,
+        "y": 67
+      },
+      "id": 20,
+      "options": {
+        "legend": {
+          "calcs": [],
+          "displayMode": "list",
+          "placement": "bottom",
+          "showLegend": true
+        },
+        "tooltip": {
+          "mode": "single",
+          "sort": "none"
+        }
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "rate(boostad_rtb_candidate_count_sum{job=\"backend-app\"}[1m]) / clamp_min(rate(boostad_rtb_candidate_count_count{job=\"backend-app\"}[1m]), 1e-9)",
+          "legendFormat": "matched_before_reserve",
+          "range": true,
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "rate(boostad_rtb_reserve_attempt_candidate_count_sum{job=\"backend-app\"}[1m]) / clamp_min(rate(boostad_rtb_reserve_attempt_candidate_count_count{job=\"backend-app\"}[1m]), 1e-9)",
+          "legendFormat": "reserve_attempt",
+          "range": true,
+          "refId": "B"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "rate(boostad_rtb_reserved_candidate_count_sum{job=\"backend-app\"}[1m]) / clamp_min(rate(boostad_rtb_reserved_candidate_count_count{job=\"backend-app\"}[1m]), 1e-9)",
+          "legendFormat": "reserved",
+          "range": true,
+          "refId": "C"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "rate(boostad_rtb_rollback_candidate_count_sum{job=\"backend-app\"}[1m]) / clamp_min(rate(boostad_rtb_rollback_candidate_count_count{job=\"backend-app\"}[1m]), 1e-9)",
+          "legendFormat": "rollback",
+          "range": true,
+          "refId": "D"
+        }
+      ],
+      "title": "Reserve/Rollback Fan-out",
+      "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "PBFA97CFB590B2093"
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": {
+            "mode": "thresholds"
+          },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "orange",
+                "value": 2
+              },
+              {
+                "color": "red",
+                "value": 5
+              }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 6,
+        "x": 18,
+        "y": 67
+      },
+      "id": 21,
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "justifyMode": "auto",
+        "orientation": "auto",
+        "reduceOptions": {
+          "calcs": [
+            "lastNotNull"
+          ],
+          "fields": "",
+          "values": false
+        },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "PBFA97CFB590B2093"
+          },
+          "editorMode": "code",
+          "expr": "rate(boostad_rtb_reserve_window_attempt_count_sum{job=\"backend-app\"}[1m]) / clamp_min(rate(boostad_rtb_reserve_window_attempt_count_count{job=\"backend-app\"}[1m]), 1e-9)",
+          "range": true,
+          "refId": "A"
+        }
+      ],
+      "title": "평균 Reserve Window 시도 수 (Reserve Window Attempts Avg)",
+      "type": "stat"
     }
   ],
   "refresh": "5s",
@@ -1107,6 +1256,6 @@
   "timezone": "browser",
   "title": "BoostAD RTB 로컬 대시보드 (BoostAD RTB Local)",
   "uid": "boostad-rtb-local",
-  "version": 3,
+  "version": 4,
   "weekStart": ""
 }

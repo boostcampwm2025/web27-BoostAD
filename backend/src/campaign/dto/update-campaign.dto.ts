@@ -1,16 +1,16 @@
 import { Type } from 'class-transformer';
 import {
-  IsString,
-  IsInt,
-  IsDateString,
   IsArray,
+  IsBoolean,
+  IsDateString,
+  IsDivisibleBy,
+  IsIn,
+  IsInt,
+  IsOptional,
+  IsString,
   IsUrl,
   MaxLength,
   Min,
-  IsOptional,
-  IsIn,
-  IsBoolean,
-  IsDivisibleBy,
 } from 'class-validator';
 
 export class UpdateCampaignDto {
@@ -41,6 +41,7 @@ export class UpdateCampaignDto {
   @IsBoolean({ message: '고의도 학습자 여부는 boolean이어야 합니다.' })
   isHighIntent?: boolean;
 
+  // TODO: 클라이언트에서 number타입값 보내므로 형변환 필요없음. 추후 제거
   @IsOptional()
   @Type(() => Number)
   @IsInt({ message: '최대 CPC는 정수여야 합니다.' })

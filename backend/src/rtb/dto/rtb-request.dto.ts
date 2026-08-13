@@ -5,6 +5,7 @@ import {
   IsNumber,
   IsOptional,
   IsBoolean,
+  Matches,
   // ValidateNested,
   // Min,
   // Max,
@@ -44,6 +45,12 @@ export class RTBRequestDto {
   @IsArray()
   @IsString({ each: true })
   tags: string[];
+
+  @Expose()
+  @IsOptional()
+  @IsString()
+  @Matches(/^ctx_[a-f0-9]{64}$/)
+  contextId?: string;
 
   // 행동 데이터는 제외 -> 주석은 추후 리팩토링 시, 참고용으로 남겨둠
   // @Expose()

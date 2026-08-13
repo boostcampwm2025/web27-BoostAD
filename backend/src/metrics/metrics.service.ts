@@ -19,6 +19,13 @@ type DependencyLabel = 'dependency' | 'operation' | 'outcome';
 type BidLogPubSubMessageLabel = 'result';
 type BidLogPubSubEventLabel = 'result';
 type QueueJobLabel = 'queue' | 'state';
+type EmbeddingSourceLabel = 'source';
+type EmbeddingBackgroundLabel = 'result';
+type LexicalFallbackLabel = 'reason';
+type ContextObserveLabel = 'status';
+type ContextJobLabel = 'result';
+type ContextDecisionLabel = 'status';
+type ContextCacheLabel = 'result';
 
 @Injectable()
 export class MetricsService {
@@ -56,7 +63,10 @@ export class MetricsService {
     name: 'boostad_rtb_stage_duration_seconds',
     help: 'RTB stage 처리 시간',
     labelNames: ['stage', 'outcome'],
-    buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+    buckets: [
+      0.00001, 0.000025, 0.00005, 0.0001, 0.00025, 0.0005, 0.001, 0.005, 0.01,
+      0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5,
+    ],
     registers: [this.registry],
   });
 
@@ -69,7 +79,35 @@ export class MetricsService {
 
   private readonly rtbCandidateCount = new Histogram({
     name: 'boostad_rtb_candidate_count',
-    help: 'RTB 최종 후보 수 분포',
+    help: 'RTB reserve 전 후보 수 분포',
+    buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+    registers: [this.registry],
+  });
+
+  private readonly rtbReserveAttemptCandidateCount = new Histogram({
+    name: 'boostad_rtb_reserve_attempt_candidate_count',
+    help: 'RTB reserve 단계에서 실제 시도한 후보 수 분포',
+    buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+    registers: [this.registry],
+  });
+
+  private readonly rtbReservedCandidateCount = new Histogram({
+    name: 'boostad_rtb_reserved_candidate_count',
+    help: 'RTB reserve 성공 후보 수 분포',
+    buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+    registers: [this.registry],
+  });
+
+  private readonly rtbReserveWindowAttemptCount = new Histogram({
+    name: 'boostad_rtb_reserve_window_attempt_count',
+    help: 'RTB reserve 성공 또는 종료 전까지 시도한 window 수 분포',
+    buckets: [1, 2, 3, 5, 10, 20, 50, 100],
+    registers: [this.registry],
+  });
+
+  private readonly rtbRollbackCandidateCount = new Histogram({
+    name: 'boostad_rtb_rollback_candidate_count',
+    help: 'RTB rollback 대상 후보 수 분포',
     buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
     registers: [this.registry],
   });
@@ -77,6 +115,20 @@ export class MetricsService {
   private readonly rtbEligibleCampaignCount = new Histogram({
     name: 'boostad_rtb_eligible_campaign_count',
     help: 'RTB eligible 캠페인 수 분포',
+    buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+    registers: [this.registry],
+  });
+
+  private readonly rtbAnnTagHitCount = new Histogram({
+    name: 'boostad_rtb_ann_tag_hit_count',
+    help: 'ANN retrieval이 반환한 tag hit 수 분포',
+    buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
+    registers: [this.registry],
+  });
+
+  private readonly rtbAnnRetrievedCampaignCount = new Histogram({
+    name: 'boostad_rtb_ann_retrieved_campaign_count',
+    help: 'ANN retrieval 이후 exact rerank로 넘긴 캠페인 수 분포',
     buckets: [1, 2, 5, 10, 20, 50, 100, 200, 500, 1000],
     registers: [this.registry],
   });
@@ -92,6 +144,151 @@ export class MetricsService {
     name: 'boostad_rtb_fallback_total',
     help: 'RTB fallback 발생 수',
     labelNames: ['reason'],
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL1HitTotal = new Counter({
+    name: 'boostad_rtb_embedding_l1_hit_total',
+    help: 'Request embedding L1 cache hit count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL1MissTotal = new Counter({
+    name: 'boostad_rtb_embedding_l1_miss_total',
+    help: 'Request embedding L1 cache miss count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL1EvictionTotal = new Counter({
+    name: 'boostad_rtb_embedding_l1_eviction_total',
+    help: 'Request embedding L1 cache eviction count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL2HitTotal = new Counter({
+    name: 'boostad_rtb_embedding_l2_hit_total',
+    help: 'Request embedding L2 Redis hit count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL2MissTotal = new Counter({
+    name: 'boostad_rtb_embedding_l2_miss_total',
+    help: 'Request embedding L2 Redis miss count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL2TimeoutTotal = new Counter({
+    name: 'boostad_rtb_embedding_l2_timeout_total',
+    help: 'Request embedding L2 Redis lookup timeout count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL2WriteTimeoutTotal = new Counter({
+    name: 'boostad_rtb_embedding_l2_write_timeout_total',
+    help: 'Request embedding L2 Redis write timeout count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingL2ErrorTotal = new Counter({
+    name: 'boostad_rtb_embedding_l2_error_total',
+    help: 'Request embedding L2 Redis error count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingSingleflightWaitTotal = new Counter({
+    name: 'boostad_rtb_embedding_singleflight_wait_total',
+    help: 'Request embedding single-flight waiter count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingSingleflightDurationSeconds = new Histogram({
+    name: 'boostad_rtb_embedding_singleflight_duration_seconds',
+    help: 'Request embedding single-flight waiter duration',
+    buckets: [0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5],
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingRuntimeTotal = new Counter({
+    name: 'boostad_rtb_embedding_runtime_total',
+    help: 'Request embedding runtime Xenova inference count',
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingSourceTotal = new Counter<EmbeddingSourceLabel>({
+    name: 'boostad_rtb_embedding_source_total',
+    help: 'Request embedding resolution source',
+    labelNames: ['source'],
+    registers: [this.registry],
+  });
+
+  private readonly rtbEmbeddingBackgroundTotal =
+    new Counter<EmbeddingBackgroundLabel>({
+      name: 'boostad_rtb_embedding_background_total',
+      help: 'Request embedding background warm-up lifecycle',
+      labelNames: ['result'],
+      registers: [this.registry],
+    });
+
+  private readonly rtbLexicalFallbackTotal = new Counter<LexicalFallbackLabel>({
+    name: 'boostad_rtb_lexical_fallback_total',
+    help: 'Cold-miss lexical fallback entries',
+    labelNames: ['reason'],
+    registers: [this.registry],
+  });
+
+  private readonly rtbLexicalCandidateCount = new Histogram({
+    name: 'boostad_rtb_lexical_candidate_count',
+    help: 'Lexical fallback candidate count',
+    buckets: [0, 1, 2, 5, 10, 20, 30, 50, 100, 200, 500, 1000],
+    registers: [this.registry],
+  });
+
+  private readonly rtbHybridSparseLookupDurationSeconds = new Histogram({
+    name: 'boostad_rtb_hybrid_sparse_lookup_duration_seconds',
+    help: 'Hybrid sparse tag-index lookup duration',
+    buckets: [0.0001, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1],
+    registers: [this.registry],
+  });
+
+  private readonly rtbHybridFusionDurationSeconds = new Histogram({
+    name: 'boostad_rtb_hybrid_fusion_duration_seconds',
+    help: 'Hybrid RRF fusion duration',
+    buckets: [0.00005, 0.0001, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025],
+    registers: [this.registry],
+  });
+
+  private readonly rtbContextObserveTotal = new Counter<ContextObserveLabel>({
+    name: 'boostad_rtb_context_observe_total',
+    help: 'Context observe result count',
+    labelNames: ['status'],
+    registers: [this.registry],
+  });
+
+  private readonly rtbContextJobTotal = new Counter<ContextJobLabel>({
+    name: 'boostad_rtb_context_job_total',
+    help: 'Context embedding job lifecycle',
+    labelNames: ['result'],
+    registers: [this.registry],
+  });
+
+  private readonly rtbContextEmbeddingDurationSeconds = new Histogram({
+    name: 'boostad_rtb_context_embedding_duration_seconds',
+    help: 'Context embedding worker generation duration',
+    buckets: [0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10],
+    registers: [this.registry],
+  });
+
+  private readonly rtbContextDecisionTotal = new Counter<ContextDecisionLabel>({
+    name: 'boostad_rtb_context_decision_total',
+    help: 'Context state used by RTB decision',
+    labelNames: ['status'],
+    registers: [this.registry],
+  });
+
+  private readonly rtbContextCacheTotal = new Counter<ContextCacheLabel>({
+    name: 'boostad_rtb_context_cache_total',
+    help: 'Context READY embedding L1/L2 cache outcomes',
+    labelNames: ['result'],
     registers: [this.registry],
   });
 
@@ -203,12 +400,40 @@ export class MetricsService {
     });
   }
 
+  observeRtbMatchedBeforeReserveCount(count: number) {
+    this.rtbCandidateCount.observe(count);
+  }
+
   observeRtbCandidateCount(count: number) {
     this.rtbCandidateCount.observe(count);
   }
 
+  observeRtbReserveAttemptCandidateCount(count: number) {
+    this.rtbReserveAttemptCandidateCount.observe(count);
+  }
+
+  observeRtbReservedCandidateCount(count: number) {
+    this.rtbReservedCandidateCount.observe(count);
+  }
+
+  observeRtbReserveWindowAttemptCount(count: number) {
+    this.rtbReserveWindowAttemptCount.observe(count);
+  }
+
+  observeRtbRollbackCandidateCount(count: number) {
+    this.rtbRollbackCandidateCount.observe(count);
+  }
+
   observeRtbEligibleCampaignCount(count: number) {
     this.rtbEligibleCampaignCount.observe(count);
+  }
+
+  observeRtbAnnTagHitCount(count: number) {
+    this.rtbAnnTagHitCount.observe(count);
+  }
+
+  observeRtbAnnRetrievedCampaignCount(count: number) {
+    this.rtbAnnRetrievedCampaignCount.observe(count);
   }
 
   observeRtbBidLogCount(count: number) {
@@ -219,8 +444,114 @@ export class MetricsService {
     this.rtbFallbackTotal.inc({ reason });
   }
 
-  incRtbReservationFailure(reason: string) {
-    this.rtbReservationFailuresTotal.inc({ reason });
+  incRtbEmbeddingL1Hit(count = 1) {
+    if (count > 0) this.rtbEmbeddingL1HitTotal.inc(count);
+  }
+
+  incRtbEmbeddingL1Miss(count = 1) {
+    if (count > 0) this.rtbEmbeddingL1MissTotal.inc(count);
+  }
+
+  incRtbEmbeddingL1Eviction(count = 1) {
+    if (count > 0) this.rtbEmbeddingL1EvictionTotal.inc(count);
+  }
+
+  incRtbEmbeddingL2Hit(count = 1) {
+    if (count > 0) this.rtbEmbeddingL2HitTotal.inc(count);
+  }
+
+  incRtbEmbeddingL2Miss(count = 1) {
+    if (count > 0) this.rtbEmbeddingL2MissTotal.inc(count);
+  }
+
+  incRtbEmbeddingL2Timeout(count = 1) {
+    if (count > 0) this.rtbEmbeddingL2TimeoutTotal.inc(count);
+  }
+
+  incRtbEmbeddingL2WriteTimeout(count = 1) {
+    if (count > 0) this.rtbEmbeddingL2WriteTimeoutTotal.inc(count);
+  }
+
+  incRtbEmbeddingL2Error(count = 1) {
+    if (count > 0) this.rtbEmbeddingL2ErrorTotal.inc(count);
+  }
+
+  incRtbEmbeddingSingleflightWait(count = 1) {
+    if (count > 0) this.rtbEmbeddingSingleflightWaitTotal.inc(count);
+  }
+
+  observeRtbEmbeddingSingleflightDuration(seconds: number) {
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      this.rtbEmbeddingSingleflightDurationSeconds.observe(seconds);
+    }
+  }
+
+  incRtbEmbeddingRuntime(count = 1) {
+    if (count > 0) this.rtbEmbeddingRuntimeTotal.inc(count);
+  }
+
+  incRtbEmbeddingSource(
+    source: 'tag-L1' | 'tag-L2' | 'runtime' | 'fallback' | 'context'
+  ) {
+    this.rtbEmbeddingSourceTotal.inc({ source });
+  }
+
+  recordRtbEmbeddingBackground(
+    result: 'scheduled' | 'deduplicated' | 'completed' | 'failed' | 'dropped'
+  ) {
+    this.rtbEmbeddingBackgroundTotal.inc({ result });
+  }
+
+  recordRtbLexicalFallback(reason: string, candidateCount: number) {
+    this.rtbLexicalFallbackTotal.inc({ reason });
+    if (Number.isFinite(candidateCount) && candidateCount >= 0) {
+      this.rtbLexicalCandidateCount.observe(candidateCount);
+    }
+  }
+
+  observeRtbHybridSparseLookupDuration(seconds: number) {
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      this.rtbHybridSparseLookupDurationSeconds.observe(seconds);
+    }
+  }
+
+  observeRtbHybridFusionDuration(seconds: number) {
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      this.rtbHybridFusionDurationSeconds.observe(seconds);
+    }
+  }
+
+  recordRtbContextObserve(status: 'READY' | 'PENDING' | 'FAILED') {
+    this.rtbContextObserveTotal.inc({ status });
+  }
+
+  recordRtbContextJob(
+    result: 'enqueued' | 'deduplicated' | 'completed' | 'failed'
+  ) {
+    this.rtbContextJobTotal.inc({ result });
+  }
+
+  observeRtbContextEmbeddingDuration(seconds: number) {
+    if (Number.isFinite(seconds) && seconds >= 0) {
+      this.rtbContextEmbeddingDurationSeconds.observe(seconds);
+    }
+  }
+
+  recordRtbContextDecision(
+    status: 'READY' | 'PENDING' | 'FAILED' | 'MISS' | 'TIMEOUT' | 'ERROR'
+  ) {
+    this.rtbContextDecisionTotal.inc({ status });
+  }
+
+  recordRtbContextCache(result: 'l1_hit' | 'l1_miss' | 'l2_hit' | 'eviction') {
+    this.rtbContextCacheTotal.inc({ result });
+  }
+
+  incRtbReservationFailure(reason: string, count = 1) {
+    if (count <= 0) {
+      return;
+    }
+    this.rtbReservationFailuresTotal.inc({ reason }, count);
   }
 
   observeRtbPayload(direction: 'request' | 'response', bytes: number) {

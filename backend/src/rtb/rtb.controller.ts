@@ -15,6 +15,8 @@ import { Public } from '../auth/decorators/public.decorator';
 import { type Response } from 'express';
 import { randomUUID } from 'crypto';
 import { MetricsService } from '../metrics/metrics.service';
+import { ContextEmbeddingService } from './context/context-embedding.service';
+import { ContextObserveDto } from './dto/context-observe.dto';
 import {
   createRtbPathLogger,
   rtbPathLogsEnabled,
@@ -29,9 +31,33 @@ export class RTBController {
 
   constructor(
     private readonly rtbService: RTBService,
-    private readonly metricsService: MetricsService
+    private readonly metricsService: MetricsService,
+    private readonly contextEmbeddingService: ContextEmbeddingService
   ) {}
 
+  /**
+   * 글 단위 embedding 사전 준비 API (SDK가 decision 직전에 호출).
+   * READY/PENDING/FAILED + contextId만 즉시 반환하고, 실제 벡터 생성은 worker가 비동기로 수행한다.
+   */
+  @Post('context/observe')
+  async observeContext(@Body() body: ContextObserveDto) {
+    const state = await this.contextEmbeddingService.observe({
+      title: body.title,
+      body: body.body,
+      tags: body.tags,
+    });
+    return {
+      status: state.status,
+      contextId: state.contextId,
+      contentHash: state.contentHash,
+      timestamp: new Date().toISOString(),
+    };
+  }
+
+  /**
+   * RTB 광고 선정. body.contextId가 있으면 READY일 때만 semantic path,
+   * 없거나 PENDING이면 Matcher가 lexical/tag fallback으로 응답한다.
+   */
   @Post('decision')
   async getDecision(
     @Body() body: RTBRequestDto,
@@ -58,6 +84,7 @@ export class RTBController {
       blogId: req.blog!.id, // Guard에서 이미 검증/조회한 blog 활용
       blogName: req.blog!.name, // Guard에서 조회한 blog name 전달 (SSE 이벤트용 DB 조회 제거)
       tags: body.tags,
+      contextId: body.contextId,
       postUrl: body.postUrl,
       behaviorScore: body.behaviorScore,
       isHighIntent: body.isHighIntent,

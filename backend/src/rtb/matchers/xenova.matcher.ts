@@ -1,19 +1,37 @@
 import { Injectable } from '@nestjs/common';
-import { Matcher } from './matcher.interface';
+import { ConfigService } from '@nestjs/config';
 import { CampaignCacheRepository } from '../../campaign/repository/campaign.cache.repository.interface';
+import {
+  CampaignServingSnapshotService,
+  type ServingCampaign,
+} from '../../campaign/campaign-serving-snapshot.service';
 import { MLEngine } from '../ml/mlEngine.interface';
-import type { Candidate, DecisionContext } from '../types/decision.types';
+import { RequestEmbeddingCacheService } from '../ml/request-embedding-cache.service';
+import type { EmbeddingPendingReason } from '../ml/request-embedding-cache.service';
+import { ContextEmbeddingService } from '../context/context-embedding.service';
+import type { DecisionContext, ScoredCandidate } from '../types/decision.types';
 import type { CachedCampaign } from '../../campaign/types/campaign.types';
 import { MetricsService } from '../../metrics/metrics.service';
 import {
   createRtbPathLogger,
   rtbPathLogsEnabled,
 } from '../../common/logging/rtb-path-logger.util';
+import { Matcher, type QualityRetrievalMode } from './matcher.interface';
+import {
+  fuseHybridRankings,
+  type RetrievalHit,
+} from '../retrieval/hybrid-retrieval.fusion';
+
+type MatchableCampaign = CachedCampaign | ServingCampaign;
+type DenseRetrievalMode = 'legacy_tag' | 'semantic_document';
+type RetrievalMode = 'dense_only' | 'hybrid';
 
 @Injectable()
 export class TransformerMatcher extends Matcher {
   private readonly logger = createRtbPathLogger(TransformerMatcher.name);
   private readonly logsEnabled = rtbPathLogsEnabled();
+  private readonly CPC_WEIGHT = 0.3;
+  private readonly SIMILARITY_WEIGHT = 0.7;
 
   // 최종 매칭 점수(0~1) 임계값
   private readonly SIMILARITY_THRESHOLD = 0.3;
@@ -38,26 +56,131 @@ export class TransformerMatcher extends Matcher {
     exact: 0.05,
   } as const;
 
-  // 임베딩은 계산 비용이 높아서(모델 호출), 태그 문자열 기준으로 간단 캐싱합니다.
-  private readonly embeddingCache = new Map<string, number[]>();
-  private readonly EMBEDDING_CACHE_MAX_SIZE = 1_000;
+  private readonly annEnabled: boolean;
+  private readonly annTopL: number;
+  private readonly annTopM: number;
+  private readonly annMaxTagHitsPerCampaign: number;
+  private readonly localSnapshotEnabled: boolean;
+  private readonly coldMissFastPathEnabled: boolean;
+  private readonly lexicalTopM: number;
+  private readonly contextDecisionEnabled: boolean;
+  private readonly denseRetrievalMode: DenseRetrievalMode;
+  private readonly documentSimilarityThreshold: number;
+  private readonly retrievalMode: RetrievalMode;
+  private readonly hybridRrfK: number;
+  private readonly hybridDenseWeight: number;
+  private readonly hybridSparseWeight: number;
+  private readonly hybridSparseSupplementLimit: number;
+  private readonly hybridFinalLimit: number;
 
   constructor(
     private readonly campaignCacheRepo: CampaignCacheRepository,
+    private readonly campaignServingSnapshot: CampaignServingSnapshotService,
     private readonly mlEngine: MLEngine,
-    private readonly metricsService: MetricsService
+    private readonly requestEmbeddingCache: RequestEmbeddingCacheService,
+    private readonly contextEmbeddingService: ContextEmbeddingService,
+    private readonly metricsService: MetricsService,
+    private readonly configService: ConfigService
   ) {
     super();
+    this.annEnabled =
+      this.configService.get<string>('RTB_MATCHER_ANN_ENABLED', 'false') ===
+      'true';
+    this.annTopL = this.getPositiveIntEnv('RTB_MATCHER_ANN_TOP_L', 200);
+    this.annTopM = this.getPositiveIntEnv('RTB_MATCHER_ANN_TOP_M', 30);
+    this.annMaxTagHitsPerCampaign = this.getPositiveIntEnv(
+      'RTB_MATCHER_ANN_PER_CAMPAIGN_HIT_LIMIT',
+      3
+    );
+    const campaignSource = this.configService.get<string>(
+      'RTB_CAMPAIGN_SOURCE'
+    );
+    this.localSnapshotEnabled = campaignSource
+      ? campaignSource === 'local_snapshot'
+      : this.configService.get<string>(
+          'RTB_MATCHER_LOCAL_SNAPSHOT_ENABLED',
+          'false'
+        ) === 'true';
+    this.coldMissFastPathEnabled =
+      this.localSnapshotEnabled &&
+      this.configService.get<string>(
+        'RTB_EMBEDDING_COLD_MISS_FAST_PATH_ENABLED',
+        'false'
+      ) === 'true';
+    this.lexicalTopM = this.getPositiveIntEnv('RTB_LEXICAL_TOP_M', 30);
+    this.contextDecisionEnabled =
+      this.localSnapshotEnabled &&
+      this.configService.get<string>(
+        'RTB_CONTEXT_DECISION_ENABLED',
+        'false'
+      ) === 'true';
+    const denseRetrievalMode = this.configService.get<string>(
+      'RTB_DENSE_RETRIEVAL_MODE',
+      'semantic_document'
+    );
+    if (
+      denseRetrievalMode !== 'legacy_tag' &&
+      denseRetrievalMode !== 'semantic_document'
+    ) {
+      throw new Error(
+        `지원하지 않는 RTB_DENSE_RETRIEVAL_MODE입니다: ${denseRetrievalMode}`
+      );
+    }
+    this.denseRetrievalMode = denseRetrievalMode;
+    this.documentSimilarityThreshold = this.getNonNegativeFloatEnv(
+      'RTB_MATCHER_DOCUMENT_SIMILARITY_THRESHOLD',
+      0.3
+    );
+    const retrievalMode = this.configService.get<string>(
+      'RTB_RETRIEVAL_MODE',
+      'dense_only'
+    );
+    if (retrievalMode !== 'dense_only' && retrievalMode !== 'hybrid') {
+      throw new Error(
+        `지원하지 않는 RTB_RETRIEVAL_MODE입니다: ${retrievalMode}`
+      );
+    }
+    this.retrievalMode = retrievalMode;
+    this.hybridRrfK = this.getPositiveIntEnv('RTB_HYBRID_RRF_K', 60);
+    this.hybridDenseWeight = this.getNonNegativeFloatEnv(
+      'RTB_HYBRID_DENSE_WEIGHT',
+      1
+    );
+    this.hybridSparseWeight = this.getNonNegativeFloatEnv(
+      'RTB_HYBRID_SPARSE_WEIGHT',
+      0.2
+    );
+    this.hybridSparseSupplementLimit = this.getPositiveIntEnv(
+      'RTB_HYBRID_SPARSE_SUPPLEMENT_LIMIT',
+      10
+    );
+    this.hybridFinalLimit = this.getPositiveIntEnv(
+      'RTB_HYBRID_FINAL_LIMIT',
+      10
+    );
   }
 
   /**
-   * Redis에 저장된 캠페인 데이터들을 바탕으로 Active, IsHighIntent, 날짜 범위, 백테 유사도 비교값을 기반으로 후보 캠페인들 반환(예산 검증X)
-   * @param context
-   * @returns
+   * 후보 캠페인 조회 (예산 검증 X).
+   *
+   * Phase 3 분기 요약:
+   *  1) contextId + READY  → 글 embedding으로 ANN
+   *  2) contextId + PENDING/FAILED → lexical fallback (기다리지 않음)
+   *  3) contextId 없음 + cold-miss ON → tag L1/L2 hit면 ANN, miss면 lexical + background warm-up
+   *  4) cold-miss OFF → 기존처럼 resolve()로 runtime까지 await
    */
-  async findCandidatesByTags(context: DecisionContext): Promise<Candidate[]> {
-    // ML 모델 준비 안 됐으면 빈 배열 반환 (Scorer에서 태그 매칭으로 커버 예정)
+  async findCandidatesByTags(
+    context: DecisionContext
+  ): Promise<ScoredCandidate[]> {
+    const requestText = this.buildRequestText(context.tags);
+    const requestNorm = this.normalizeText(requestText);
+    const requestTokens = new Set(this.tokenizeText(requestText));
+
     if (!this.mlEngine.isReady()) {
+      // 모델 로딩 전이라도 광고는 나가야 하면 태그 문자열 매칭으로 응답
+      if (this.coldMissFastPathEnabled) {
+        return this.findCandidatesByLexicalFallback(context, 'model_not_ready');
+      }
       this.metricsService.incRtbFallback('matcher_empty');
       if (this.logsEnabled) {
         this.logger.warn('ML 모델이 준비가 안 되었습니다.');
@@ -65,9 +188,84 @@ export class TransformerMatcher extends Matcher {
       return [];
     }
 
-    const requestText = this.buildRequestText(context.tags);
-    const requestNorm = this.normalizeText(requestText);
-    const requestTokens = new Set(this.tokenizeText(requestText));
+    let requestEmbedding: number[];
+    const requestEmbeddingStartedAt = process.hrtime.bigint();
+    try {
+      // (1) SDK observe가 넘겨준 contextId 우선
+      if (this.contextDecisionEnabled && context.contextId) {
+        const contextResult =
+          await this.contextEmbeddingService.resolveForDecision(
+            context.contextId
+          );
+        this.metricsService.recordRtbContextDecision(contextResult.status);
+        if (contextResult.status !== 'READY') {
+          // 첫 방문 PENDING이 여기로 옴 → Xenova 대기 없이 lexical
+          this.metricsService.recordRtbStage(
+            'match_request_embedding',
+            'fallback',
+            this.elapsedMs(requestEmbeddingStartedAt)
+          );
+          return this.findCandidatesByLexicalFallback(
+            context,
+            `context_${contextResult.status.toLowerCase()}`
+          );
+        }
+        requestEmbedding = contextResult.embedding;
+        this.metricsService.incRtbEmbeddingSource('context');
+      } else if (this.coldMissFastPathEnabled) {
+        // (2) 태그 캐시만 조회. miss면 pending + 백그라운드 생성, 이번 요청은 lexical
+        const resolved =
+          await this.requestEmbeddingCache.resolveCachedOrSchedule(requestText);
+        if (resolved.status === 'pending') {
+          this.metricsService.recordRtbStage(
+            'match_request_embedding',
+            'fallback',
+            this.elapsedMs(requestEmbeddingStartedAt)
+          );
+          return this.findCandidatesByLexicalFallback(context, resolved.reason);
+        }
+        requestEmbedding = resolved.embedding;
+      } else {
+        // (3) flag off: 캐시 miss여도 runtime까지 기다림 (구 Phase 3A 동기 경로)
+        requestEmbedding = await this.getEmbeddingCached(requestText);
+      }
+      this.metricsService.recordRtbStage(
+        'match_request_embedding',
+        'ok',
+        this.elapsedMs(requestEmbeddingStartedAt)
+      );
+    } catch (error) {
+      if (this.coldMissFastPathEnabled) {
+        this.metricsService.recordRtbStage(
+          'match_request_embedding',
+          'fallback',
+          this.elapsedMs(requestEmbeddingStartedAt)
+        );
+        return this.findCandidatesByLexicalFallback(context, 'cache_error');
+      }
+      this.metricsService.recordRtbStage(
+        'match_request_embedding',
+        'error',
+        this.elapsedMs(requestEmbeddingStartedAt)
+      );
+      this.metricsService.incRtbFallback('embedding_error');
+      if (this.logsEnabled) {
+        this.logger.warn(
+          '요청 태그 임베딩 생성에 실패했습니다.',
+          error as Error
+        );
+      }
+      return [];
+    }
+
+    if (this.annEnabled) {
+      return this.findCandidatesByAnn(
+        context,
+        requestEmbedding,
+        requestNorm,
+        requestTokens
+      );
+    }
 
     // Redis에서 모든 캠페인 조회 (캐시 우선 전략)
     const getAllCampaignsStartedAt = process.hrtime.bigint();
@@ -101,38 +299,618 @@ export class TransformerMatcher extends Matcher {
       return [];
     }
 
-    let requestEmbedding: number[];
-    const requestEmbeddingStartedAt = process.hrtime.bigint();
-    try {
-      // 요청 임베딩은 모든 캠페인 비교에서 공통으로 사용되므로 한 번만 계산합니다.
-      requestEmbedding = await this.getEmbeddingCached(requestText);
-      this.metricsService.recordRtbStage(
-        'match_get_request_embedding',
-        'ok',
-        this.elapsedMs(requestEmbeddingStartedAt)
-      );
-      // requestEmbedding = await this.mlEngine.getEmbedding(requestText);
-    } catch (error) {
-      this.metricsService.recordRtbStage(
-        'match_get_request_embedding',
-        'error',
-        this.elapsedMs(requestEmbeddingStartedAt)
-      );
-      this.metricsService.incRtbFallback('embedding_error');
-      if (this.logsEnabled) {
-        this.logger.warn(
-          '요청 태그 임베딩 생성에 실패했습니다.',
-          error as Error
+    return this.scoreEligibleCampaigns(
+      eligibleCampaigns,
+      requestEmbedding,
+      requestNorm,
+      requestTokens,
+      allCampaigns.length
+    );
+  }
+
+  /**
+   * Transformer/ANN을 우회하는 태그 문자열 fast path.
+   * local snapshot 역인덱스에서 태그 교집합 캠페인을 모아
+   * exact match 수 → coverage → CPC 순으로 top-M을 고른다.
+   */
+  private async findCandidatesByLexicalFallback(
+    context: DecisionContext,
+    reason:
+      | EmbeddingPendingReason
+      | 'model_not_ready'
+      | 'cache_error'
+      | 'semantic_index_unready'
+      | `context_${string}`
+  ): Promise<ScoredCandidate[]> {
+    const startedAt = process.hrtime.bigint();
+    const requestTags = new Set(
+      context.tags.map((tag) => this.normalizeText(tag)).filter(Boolean)
+    );
+    // Redis hydrate 없이 프로세스 로컬 역인덱스만 조회
+    const indexedCampaigns =
+      await this.campaignServingSnapshot.findCampaignsByTags([...requestTags]);
+    const eligibleCampaigns = this.filterEligibleCampaigns(
+      indexedCampaigns,
+      context.isHighIntent,
+      false
+    );
+
+    const candidates = eligibleCampaigns
+      .map((campaign) => {
+        const campaignTags = new Set(
+          (campaign.tags ?? [])
+            .map((tag) => this.normalizeText(tag))
+            .filter(Boolean)
         );
+        let exactMatchCount = 0;
+        for (const tag of requestTags) {
+          if (campaignTags.has(tag)) {
+            exactMatchCount += 1;
+          }
+        }
+        const coverage =
+          requestTags.size === 0 ? 0 : exactMatchCount / requestTags.size;
+        return {
+          ...campaign,
+          embeddingTags: undefined,
+          embeddingDocument: undefined,
+          similarity: coverage,
+          score: exactMatchCount * 100 + coverage * 10,
+          exactMatchCount,
+        };
+      })
+      .filter((candidate) => candidate.exactMatchCount > 0)
+      .sort((a, b) => {
+        if (b.exactMatchCount !== a.exactMatchCount) {
+          return b.exactMatchCount - a.exactMatchCount;
+        }
+        if (b.similarity !== a.similarity) {
+          return b.similarity - a.similarity;
+        }
+        if (b.maxCpc !== a.maxCpc) {
+          return b.maxCpc - a.maxCpc;
+        }
+        return a.id.localeCompare(b.id);
+      })
+      .slice(0, this.lexicalTopM)
+      .map(({ exactMatchCount: _exactMatchCount, ...candidate }) => candidate);
+
+    this.metricsService.incRtbEmbeddingSource('fallback');
+    this.metricsService.recordRtbLexicalFallback(reason, candidates.length);
+    this.metricsService.incRtbFallback(`embedding_${reason}`);
+    this.metricsService.recordRtbStage(
+      'match_lexical_fallback',
+      candidates.length > 0 ? 'ok' : 'fallback',
+      this.elapsedMs(startedAt)
+    );
+    this.metricsService.observeRtbEligibleCampaignCount(
+      eligibleCampaigns.length
+    );
+
+    if (candidates.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
+    }
+    return candidates;
+  }
+
+  private getPositiveIntEnv(name: string, defaultValue: number): number {
+    const raw = this.configService.get<string>(name);
+    const parsed = raw ? Number.parseInt(raw, 10) : defaultValue;
+    if (!Number.isFinite(parsed) || parsed <= 0) {
+      return defaultValue;
+    }
+    return parsed;
+  }
+
+  private getNonNegativeFloatEnv(name: string, defaultValue: number): number {
+    const raw = this.configService.get<string>(name);
+    const parsed = raw === undefined ? defaultValue : Number.parseFloat(raw);
+    if (!Number.isFinite(parsed) || parsed < 0) {
+      return defaultValue;
+    }
+    return parsed;
+  }
+
+  private async findCandidatesByAnn(
+    context: DecisionContext,
+    requestEmbedding: number[],
+    requestNorm: string,
+    requestTokens: Set<string>
+  ): Promise<ScoredCandidate[]> {
+    if (this.denseRetrievalMode === 'semantic_document') {
+      return this.findCandidatesByDocumentAnn(context, requestEmbedding);
+    }
+
+    const annSearchStartedAt = process.hrtime.bigint();
+    const tagHits = await this.campaignCacheRepo.searchCampaignTagVectors({
+      queryEmbedding: requestEmbedding,
+      topL: this.annTopL,
+      isHighIntent: context.isHighIntent,
+      nowTs: Date.now(),
+    });
+    this.metricsService.recordRtbStage(
+      'match_ann_search',
+      'ok',
+      this.elapsedMs(annSearchStartedAt)
+    );
+    this.metricsService.observeRtbAnnTagHitCount(tagHits.length);
+
+    if (tagHits.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
+      if (this.logsEnabled) {
+        this.logger.debug('ANN retrieval 결과가 비어 있습니다.');
       }
       return [];
     }
 
-    // 자격 있는 캠페인과 스코어 계산 (0~1)
-    // - Promise.all(대량)로 한 번에 태스크를 쌓으면, 대규모 캠페인에서 메모리/마이크로태스크 오버헤드가 커질 수 있음, 게다가 여기서 굳이 Promise.all 쓸 이유없음
-    //   순차 계산 + 임계값 통과 케이스만 후보로 유지
+    const groupHitsStartedAt = process.hrtime.bigint();
+    const retrievedCampaignIds = this.aggregateAnnTagHits(tagHits)
+      .slice(0, this.annTopM)
+      .map((item) => item.campaignId);
+    this.metricsService.recordRtbStage(
+      'match_ann_group_hits',
+      'ok',
+      this.elapsedMs(groupHitsStartedAt)
+    );
+    this.metricsService.observeRtbAnnRetrievedCampaignCount(
+      retrievedCampaignIds.length
+    );
+
+    if (retrievedCampaignIds.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
+      return [];
+    }
+
+    const loadRetrievedStartedAt = process.hrtime.bigint();
+    const retrievedCampaigns = this.localSnapshotEnabled
+      ? await this.campaignServingSnapshot.findCampaignsByIds(
+          retrievedCampaignIds
+        )
+      : await this.campaignCacheRepo.findCampaignCachesByIds(
+          retrievedCampaignIds
+        );
+    this.metricsService.recordRtbStage(
+      this.localSnapshotEnabled
+        ? 'match_campaign_hydrate_snapshot'
+        : 'match_campaign_hydrate_redis',
+      'ok',
+      this.elapsedMs(loadRetrievedStartedAt)
+    );
+
+    const eligibleCampaigns = this.filterEligibleCampaigns(
+      retrievedCampaigns,
+      context.isHighIntent
+    );
+
+    if (eligibleCampaigns.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
+      return [];
+    }
+
+    return this.scoreEligibleCampaigns(
+      eligibleCampaigns,
+      requestEmbedding,
+      requestNorm,
+      requestTokens,
+      eligibleCampaigns.length
+    );
+  }
+
+  private async findCandidatesByDocumentAnn(
+    context: DecisionContext,
+    requestEmbedding: number[]
+  ): Promise<ScoredCandidate[]> {
+    const annSearchStartedAt = process.hrtime.bigint();
+    const documentHits =
+      await this.campaignCacheRepo.searchCampaignDocumentVectors({
+        queryEmbedding: requestEmbedding,
+        topL: this.annTopL,
+        isHighIntent: context.isHighIntent,
+        nowTs: Date.now(),
+      });
+    this.metricsService.recordRtbStage(
+      'match_ann_document_search',
+      'ok',
+      this.elapsedMs(annSearchStartedAt)
+    );
+
+    if (documentHits.length === 0) {
+      return this.findCandidatesByLexicalFallback(
+        context,
+        'semantic_index_unready'
+      );
+    }
+
+    const retainedHits = documentHits
+      .filter((hit) => hit.similarity >= this.documentSimilarityThreshold)
+      .slice(0, this.annTopM);
+    this.metricsService.observeRtbAnnRetrievedCampaignCount(
+      retainedHits.length
+    );
+    if (retainedHits.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
+      return [];
+    }
+
+    const loadStartedAt = process.hrtime.bigint();
+    const ids = retainedHits.map((hit) => hit.campaignId);
+    const retrievedCampaigns = this.localSnapshotEnabled
+      ? await this.campaignServingSnapshot.findCampaignsByIds(ids)
+      : await this.campaignCacheRepo.findCampaignCachesByIds(ids);
+    this.metricsService.recordRtbStage(
+      this.localSnapshotEnabled
+        ? 'match_campaign_hydrate_snapshot'
+        : 'match_campaign_hydrate_redis',
+      'ok',
+      this.elapsedMs(loadStartedAt)
+    );
+
+    const eligibleById = new Map(
+      this.filterEligibleCampaigns(
+        retrievedCampaigns,
+        context.isHighIntent,
+        false
+      ).map((campaign) => [campaign.id, campaign])
+    );
+    const scoreStartedAt = process.hrtime.bigint();
+    const candidates = retainedHits.flatMap((hit) => {
+      const campaign = eligibleById.get(hit.campaignId);
+      return campaign ? [this.buildCandidate(campaign, hit.similarity)] : [];
+    });
+    this.metricsService.recordRtbStage(
+      'match_document_rerank',
+      'ok',
+      this.elapsedMs(scoreStartedAt)
+    );
+    this.metricsService.observeRtbEligibleCampaignCount(eligibleById.size);
+
+    if (candidates.length === 0) {
+      this.metricsService.incRtbFallback('matcher_empty');
+      return [];
+    }
+    if (this.retrievalMode === 'hybrid') {
+      const hybrid = await this.buildHybridCandidates(
+        context,
+        requestEmbedding,
+        retainedHits,
+        candidates
+      );
+      return hybrid.length > 0 ? hybrid : candidates;
+    }
+    return candidates;
+  }
+
+  async findQualityRankings(
+    context: DecisionContext,
+    mode: QualityRetrievalMode = 'dense_only'
+  ): Promise<ScoredCandidate[]> {
+    const requestText = this.buildRequestText(context.tags);
+    const requestEmbedding = await this.resolveRequestEmbeddingForQuality(
+      context,
+      requestText
+    );
+    if (!requestEmbedding) {
+      return [];
+    }
+
+    const documentHits =
+      await this.campaignCacheRepo.searchCampaignDocumentVectors({
+        queryEmbedding: requestEmbedding,
+        topL: this.annTopL,
+        isHighIntent: context.isHighIntent,
+        nowTs: Date.now(),
+      });
+    const retainedHits = documentHits
+      .filter((hit) => hit.similarity >= this.documentSimilarityThreshold)
+      .slice(0, this.annTopM);
+    const ids = retainedHits.map((hit) => hit.campaignId);
+    const retrievedCampaigns = this.localSnapshotEnabled
+      ? await this.campaignServingSnapshot.findCampaignsByIds(ids)
+      : await this.campaignCacheRepo.findCampaignCachesByIds(ids);
+    const eligibleById = new Map(
+      this.filterEligibleCampaigns(
+        retrievedCampaigns,
+        context.isHighIntent,
+        false
+      ).map((campaign) => [campaign.id, campaign])
+    );
+    const primary = retainedHits.flatMap((hit) => {
+      const campaign = eligibleById.get(hit.campaignId);
+      return campaign ? [this.buildCandidate(campaign, hit.similarity)] : [];
+    });
+    if (mode === 'dense_only') {
+      return primary;
+    }
+
+    const hybrid = await this.buildHybridCandidates(
+      context,
+      requestEmbedding,
+      retainedHits,
+      primary
+    );
+    return hybrid.length > 0 ? hybrid : primary;
+  }
+
+  private async resolveRequestEmbeddingForQuality(
+    context: DecisionContext,
+    requestText: string
+  ): Promise<number[] | null> {
+    if (this.contextDecisionEnabled && context.contextId) {
+      const ready = await this.contextEmbeddingService.resolveForDecision(
+        context.contextId
+      );
+      if (ready.status === 'READY' && ready.embedding?.length) {
+        return ready.embedding;
+      }
+    }
+    if (!this.mlEngine.isReady()) {
+      return null;
+    }
+    return this.mlEngine.getEmbedding(requestText, 'query');
+  }
+
+  private async buildHybridCandidates(
+    context: DecisionContext,
+    requestEmbedding: number[],
+    denseHits: Array<{ campaignId: string; similarity: number }>,
+    primary: ScoredCandidate[]
+  ): Promise<ScoredCandidate[]> {
+    const sparseStartedAt = process.hrtime.bigint();
+    const sparseRanked = await this.rankSparseTagCandidates(context);
+    this.metricsService.observeRtbHybridSparseLookupDuration(
+      this.elapsedMs(sparseStartedAt) / 1000
+    );
+
+    const denseRetrievalHits: RetrievalHit[] = denseHits.map((hit) => ({
+      campaignId: hit.campaignId,
+      rawScore: hit.similarity,
+    }));
+    const sparseRetrievalHits: RetrievalHit[] = sparseRanked.map(
+      (candidate) => ({
+        campaignId: candidate.id,
+        rawScore: candidate.similarity,
+      })
+    );
+
+    const fusionStartedAt = process.hrtime.bigint();
+    const fused = fuseHybridRankings(denseRetrievalHits, sparseRetrievalHits, {
+      rrfK: this.hybridRrfK,
+      denseWeight: this.hybridDenseWeight,
+      sparseWeight: this.hybridSparseWeight,
+      limit: denseRetrievalHits.length + sparseRetrievalHits.length,
+    });
+    this.metricsService.observeRtbHybridFusionDuration(
+      this.elapsedMs(fusionStartedAt) / 1000
+    );
+    this.metricsService.recordRtbStage(
+      'match_hybrid_fusion',
+      fused.length > 0 ? 'ok' : 'fallback',
+      this.elapsedMs(fusionStartedAt)
+    );
+
+    if (fused.length === 0) {
+      return [];
+    }
+
+    const denseCandidates = fused.filter((item) => item.dense);
+    const sparseSupplements = fused
+      .filter((item) => !item.dense && item.sparse)
+      .slice(0, this.hybridSparseSupplementLimit);
+    const rerankPool = [...denseCandidates, ...sparseSupplements];
+    const rerankStartedAt = process.hrtime.bigint();
+    const rerankIds = rerankPool.map((item) => item.campaignId);
+    const hydratedPool = this.localSnapshotEnabled
+      ? await this.campaignServingSnapshot.findCampaignsByIds(rerankIds)
+      : await this.campaignCacheRepo.findCampaignCachesByIds(rerankIds);
+    const eligibleById = new Map(
+      this.filterEligibleCampaigns(
+        hydratedPool,
+        context.isHighIntent,
+        false
+      ).map((campaign) => [campaign.id, campaign])
+    );
+
+    const exactReranked = rerankPool.flatMap((item) => {
+      const campaign = eligibleById.get(item.campaignId);
+      const documentEmbedding = campaign?.embeddingDocument;
+      if (!campaign || !documentEmbedding?.length) {
+        return [];
+      }
+      const exactSimilarity = this.mlEngine.calculateSimilarity(
+        requestEmbedding,
+        documentEmbedding
+      );
+      if (exactSimilarity < this.documentSimilarityThreshold) {
+        return [];
+      }
+      const candidate = this.buildCandidate(campaign, exactSimilarity);
+      // Sparse는 semantic exact score를 뒤집는 주 신호가 아니라 근접 후보의
+      // tie-break 보너스로만 사용한다. 기본값에서 RRF 보너스는 1점 미만이다.
+      candidate.score += (item.sparse?.contribution ?? 0) * 100;
+      return [{ candidate, denseBacked: Boolean(item.dense) }];
+    });
+
+    const bestDenseScore = exactReranked
+      .filter((item) => item.denseBacked)
+      .reduce(
+        (best, item) => Math.max(best, item.candidate.score),
+        Number.NEGATIVE_INFINITY
+      );
+    if (!Number.isFinite(bestDenseScore)) {
+      return primary.slice(0, this.hybridFinalLimit);
+    }
+
+    // Sparse-only 후보는 Top-K를 보충할 수 있지만 winner는 Dense 후보가 맡는다.
+    for (const item of exactReranked) {
+      if (!item.denseBacked && item.candidate.score >= bestDenseScore) {
+        item.candidate.score = bestDenseScore - 1e-9;
+      }
+    }
+
+    // Sparse 보너스나 exact 재계산이 현재 Dense winner를 바꾸지 않도록 하고,
+    // Hybrid 개선은 2~10위 reserve 후보에만 반영한다.
+    const denseWinner = [...primary].sort((left, right) => {
+      if (right.score !== left.score) return right.score - left.score;
+      if (right.maxCpc !== left.maxCpc) return right.maxCpc - left.maxCpc;
+      return left.id.localeCompare(right.id);
+    })[0];
+    const lockedWinner = exactReranked.find(
+      (item) => item.candidate.id === denseWinner?.id
+    );
+    if (lockedWinner) {
+      const bestOtherScore = exactReranked
+        .filter((item) => item !== lockedWinner)
+        .reduce(
+          (best, item) => Math.max(best, item.candidate.score),
+          Number.NEGATIVE_INFINITY
+        );
+      if (lockedWinner.candidate.score <= bestOtherScore) {
+        lockedWinner.candidate.score = bestOtherScore + 1e-9;
+      }
+    }
+
+    const result = exactReranked
+      .map((item) => item.candidate)
+      .sort((left, right) => {
+        if (right.score !== left.score) return right.score - left.score;
+        if (right.similarity !== left.similarity) {
+          return right.similarity - left.similarity;
+        }
+        if (right.maxCpc !== left.maxCpc) return right.maxCpc - left.maxCpc;
+        return left.id.localeCompare(right.id);
+      })
+      .slice(0, this.hybridFinalLimit);
+    this.metricsService.recordRtbStage(
+      'match_hybrid_exact_rerank',
+      result.length > 0 ? 'ok' : 'fallback',
+      this.elapsedMs(rerankStartedAt)
+    );
+    return result;
+  }
+
+  private async rankSparseTagCandidates(
+    context: DecisionContext
+  ): Promise<ScoredCandidate[]> {
+    const requestTags = new Set(
+      context.tags.map((tag) => this.normalizeText(tag)).filter(Boolean)
+    );
+    if (requestTags.size === 0 || !this.localSnapshotEnabled) {
+      return [];
+    }
+
+    const taggedCampaigns =
+      await this.campaignServingSnapshot.findCampaignsByTags([
+        ...requestTags,
+      ]);
+    const eligibleCampaigns = this.filterEligibleCampaigns(
+      taggedCampaigns,
+      context.isHighIntent,
+      false
+    );
+
+    return eligibleCampaigns
+      .map((campaign) => {
+        const campaignTags = new Set(
+          (campaign.tags ?? [])
+            .map((tag) => this.normalizeText(tag))
+            .filter(Boolean)
+        );
+        let exactMatchCount = 0;
+        for (const tag of requestTags) {
+          if (campaignTags.has(tag)) {
+            exactMatchCount += 1;
+          }
+        }
+        const coverage =
+          requestTags.size === 0 ? 0 : exactMatchCount / requestTags.size;
+        return {
+          campaign,
+          exactMatchCount,
+          coverage,
+        };
+      })
+      .filter((item) => item.exactMatchCount > 0)
+      .sort((a, b) => {
+        if (b.exactMatchCount !== a.exactMatchCount) {
+          return b.exactMatchCount - a.exactMatchCount;
+        }
+        if (b.coverage !== a.coverage) {
+          return b.coverage - a.coverage;
+        }
+        if (b.campaign.maxCpc !== a.campaign.maxCpc) {
+          return b.campaign.maxCpc - a.campaign.maxCpc;
+        }
+        return a.campaign.id.localeCompare(b.campaign.id);
+      })
+      .slice(0, this.lexicalTopM)
+      .map(({ campaign, coverage }) => this.buildCandidate(campaign, coverage));
+  }
+
+  private aggregateAnnTagHits(
+    tagHits: Array<{ campaignId: string; similarity: number }>
+  ): Array<{ campaignId: string; retrievalScore: number }> {
+    const grouped = new Map<string, number[]>();
+
+    for (const hit of tagHits) {
+      const bucket = grouped.get(hit.campaignId) ?? [];
+      if (bucket.length < this.annMaxTagHitsPerCampaign) {
+        bucket.push(hit.similarity);
+      } else {
+        const minValue = Math.min(...bucket);
+        if (hit.similarity > minValue) {
+          const minIndex = bucket.indexOf(minValue);
+          bucket[minIndex] = hit.similarity;
+        }
+      }
+      grouped.set(hit.campaignId, bucket);
+    }
+
+    return [...grouped.entries()]
+      .map(([campaignId, similarities]) => {
+        const sorted = [...similarities].sort((a, b) => b - a);
+        const topWeighted = this.computeTopWeightedSimilarity(sorted);
+        const coverage = this.clamp01(
+          sorted.length / this.annMaxTagHitsPerCampaign
+        );
+        const retrievalScore = this.clamp01(
+          topWeighted * 0.85 + coverage * 0.15
+        );
+
+        return { campaignId, retrievalScore };
+      })
+      .sort((a, b) => b.retrievalScore - a.retrievalScore);
+  }
+
+  private computeTopWeightedSimilarity(similarities: number[]): number {
+    const k = Math.min(this.TOP_K, similarities.length);
+    let weighted = 0;
+    let weightSum = 0;
+
+    for (let i = 0; i < k; i++) {
+      const weight = this.TOP_K_WEIGHTS[i] ?? 0;
+      weightSum += weight;
+      weighted += similarities[i] * weight;
+    }
+
+    if (weightSum === 0) {
+      return 0;
+    }
+
+    return this.clamp01(weighted / weightSum);
+  }
+
+  private async scoreEligibleCampaigns(
+    eligibleCampaigns: MatchableCampaign[],
+    requestEmbedding: number[],
+    requestNorm: string,
+    requestTokens: Set<string>,
+    totalCampaignCount: number
+  ): Promise<ScoredCandidate[]> {
+    // 자격 있는 캠페인에 대해 유사도와 최종 점수를 한 번에 계산합니다.
+    // - Promise.all(대량)로 한 번에 태스크를 쌓으면, 대규모 캠페인에서 메모리/마이크로태스크 오버헤드가 커질 수 있음
+    // - 순차 계산 + 임계값 통과 케이스만 후보로 유지
     const scoreLoopStartedAt = process.hrtime.bigint();
-    const candidates: Candidate[] = [];
+    const candidates: ScoredCandidate[] = [];
     try {
       for (const campaign of eligibleCampaigns) {
         const similarity = await this.scoreCampaignByTags(
@@ -142,17 +920,17 @@ export class TransformerMatcher extends Matcher {
           campaign
         );
         if (similarity >= this.SIMILARITY_THRESHOLD) {
-          candidates.push({ campaign, similarity });
+          candidates.push(this.buildCandidate(campaign, similarity));
         }
       }
       this.metricsService.recordRtbStage(
-        'match_score_loop',
+        'match_exact_rerank',
         'ok',
         this.elapsedMs(scoreLoopStartedAt)
       );
     } catch (error) {
       this.metricsService.recordRtbStage(
-        'match_score_loop',
+        'match_exact_rerank',
         'error',
         this.elapsedMs(scoreLoopStartedAt)
       );
@@ -161,23 +939,44 @@ export class TransformerMatcher extends Matcher {
 
     if (this.logsEnabled) {
       this.logger.debug(
-        `필터링된 캠페인 수 ${candidates.length}/${allCampaigns.length} 캠페인의 유사도 (임계값: ${this.SIMILARITY_THRESHOLD})`
+        `필터링된 캠페인 수 ${candidates.length}/${totalCampaignCount} 캠페인의 유사도 (임계값: ${this.SIMILARITY_THRESHOLD})`
       );
     }
 
     return candidates;
   }
 
+  private buildCandidate(
+    campaign: MatchableCampaign,
+    similarity: number
+  ): ScoredCandidate {
+    const cpcScore = campaign.maxCpc * this.CPC_WEIGHT;
+    const similarityScore = similarity * 100 * this.SIMILARITY_WEIGHT;
+
+    return {
+      ...campaign,
+      embeddingTags: undefined,
+      embeddingDocument: undefined,
+      similarity,
+      score: cpcScore + similarityScore,
+    };
+  }
+
   // 요청 태그 배열을 임베딩을 위한 단일 텍스트로 변환합니다.
   private buildRequestText(tags: string[]): string {
-    return tags.join(' ');
+    const canonicalTags = [
+      ...new Set(tags.map((tag) => this.normalizeText(tag)).filter(Boolean)),
+    ].sort();
+
+    return canonicalTags.join(' ');
   }
 
   // 비딩 자격 필터링: ACTIVE + 날짜 범위 + deletedAt + embeddingTags 존재
   private filterEligibleCampaigns(
-    campaigns: CachedCampaign[],
-    isHighIntent: boolean
-  ): CachedCampaign[] {
+    campaigns: MatchableCampaign[],
+    isHighIntent: boolean,
+    requireEmbeddings = true
+  ): MatchableCampaign[] {
     const now = new Date();
 
     return campaigns.filter((campaign) => {
@@ -201,8 +1000,9 @@ export class TransformerMatcher extends Matcher {
 
       // embeddingTags 존재 여부 (임베딩 없으면 유사도 계산 불가)
       if (
-        !campaign.embeddingTags ||
-        Object.keys(campaign.embeddingTags).length === 0
+        requireEmbeddings &&
+        (!campaign.embeddingTags ||
+          Object.keys(campaign.embeddingTags).length === 0)
       ) {
         return false;
       }
@@ -217,7 +1017,7 @@ export class TransformerMatcher extends Matcher {
   }
 
   private normalizeText(text: string): string {
-    return text.toLowerCase().replace(/\s+/g, ' ').trim();
+    return text.normalize('NFC').toLowerCase().replace(/\s+/g, ' ').trim();
   }
 
   // 텍스트를 비교용 토큰으로 분해합니다 (camelCase/구분자 분리 + sql 접미어 분해).
@@ -260,25 +1060,7 @@ export class TransformerMatcher extends Matcher {
   }
 
   private async getEmbeddingCached(text: string): Promise<number[]> {
-    const key = this.normalizeText(text);
-    const cached = this.embeddingCache.get(key);
-    if (cached) {
-      // LRU: recency 갱신
-      this.embeddingCache.delete(key);
-      this.embeddingCache.set(key, cached);
-      return cached;
-    }
-
-    const embedding = await this.mlEngine.getEmbedding(text);
-    this.embeddingCache.set(key, embedding);
-
-    // LRU eviction (최대 크기 초과 시 가장 오래된 항목 제거)
-    if (this.embeddingCache.size > this.EMBEDDING_CACHE_MAX_SIZE) {
-      const oldestKey = this.embeddingCache.keys().next().value as  // 자스 Map은 삽입 순서 유지하므로 next로 가장 먼저 들어간 값 뺄 수 있음 LRU
-        | string
-        | undefined;
-      if (oldestKey) this.embeddingCache.delete(oldestKey);
-    }
+    const { embedding } = await this.requestEmbeddingCache.resolve(text);
     return embedding;
   }
 
@@ -295,7 +1077,7 @@ export class TransformerMatcher extends Matcher {
     requestEmbedding: number[],
     requestNorm: string,
     requestTokens: Set<string>,
-    campaign: CachedCampaign
+    campaign: MatchableCampaign
   ): Promise<number> {
     // CachedCampaign의 tags는 string[] 형태
     const tagNames = (campaign.tags ?? []).filter(Boolean);
@@ -325,7 +1107,7 @@ export class TransformerMatcher extends Matcher {
 
       try {
         // Redis에 이미 캐싱된 임베딩을 우선 사용 (Worker가 생성)
-        let tagEmbedding: number[];
+        let tagEmbedding: ArrayLike<number>;
 
         if (campaign.embeddingTags && campaign.embeddingTags[tagName]) {
           // Redis에 이미 임베딩이 있으면 바로 사용

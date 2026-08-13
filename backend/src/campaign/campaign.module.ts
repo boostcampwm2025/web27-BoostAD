@@ -18,6 +18,7 @@ import { UserModule } from 'src/user/user.module';
 // import { AdvertiserModule } from 'src/advertiser/advertiser.module';
 import { RedisModule } from 'src/redis/redis.module';
 import { QueueModule } from 'src/queue/queue.module';
+import { CampaignServingSnapshotService } from './campaign-serving-snapshot.service';
 
 @Module({
   imports: [
@@ -38,12 +39,17 @@ import { QueueModule } from 'src/queue/queue.module';
   providers: [
     CampaignService,
     CampaignCronService,
+    CampaignServingSnapshotService,
     { provide: CampaignRepository, useClass: TypeOrmCampaignRepository },
     {
       provide: CampaignCacheRepository,
       useClass: RedisCampaignCacheRepository,
     },
   ],
-  exports: [CampaignRepository, CampaignCacheRepository],
+  exports: [
+    CampaignRepository,
+    CampaignCacheRepository,
+    CampaignServingSnapshotService,
+  ],
 })
 export class CampaignModule {}

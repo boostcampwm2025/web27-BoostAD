@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { BullModule } from '@nestjs/bullmq';
 import { ConfigModule, ConfigService } from '@nestjs/config';
+import { EMBEDDING_QUEUE_NAME } from './queue.names';
 
 @Module({
   imports: [
@@ -17,10 +18,19 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
     }),
     BullModule.registerQueue(
       {
-        name: 'embedding-queue',
+        name: EMBEDDING_QUEUE_NAME,
       },
       {
         name: 'bidlog-queue',
+        defaultJobOptions: {
+          removeOnComplete: true,
+          removeOnFail: false,
+          attempts: 5,
+          backoff: {
+            type: 'exponential',
+            delay: 1000,
+          },
+        },
       }
     ),
   ],

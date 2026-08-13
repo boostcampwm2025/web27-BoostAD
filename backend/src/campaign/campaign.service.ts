@@ -33,10 +33,19 @@ import {
   CreditHistoryEntity,
   CreditHistoryType,
 } from 'src/advertiser/entities/credit-history.entity';
+import { ConfigService } from '@nestjs/config';
+import {
+  resolveEmbeddingProfile,
+  toEmbeddingNamespace,
+  type EmbeddingProfile,
+} from 'src/rtb/ml/embedding-profile';
+import { EMBEDDING_QUEUE_NAME } from 'src/queue/queue.names';
 
 @Injectable()
 export class CampaignService {
   private readonly logger = new Logger(CampaignService.name);
+  private readonly embeddingProfile: EmbeddingProfile;
+  private readonly requireDocumentEmbedding: boolean;
 
   constructor(
     private readonly campaignRepository: CampaignRepository,
@@ -44,9 +53,20 @@ export class CampaignService {
     private readonly campaignCacheRepository: CampaignCacheRepository,
     private readonly logRepository: LogRepository,
     @InjectDataSource() private readonly dataSource: DataSource,
-    @InjectQueue('embedding-queue')
-    private readonly embeddingQueue: Queue<EmbeddingJobData>
-  ) {}
+    @InjectQueue(EMBEDDING_QUEUE_NAME)
+    private readonly embeddingQueue: Queue<EmbeddingJobData>,
+    configService: ConfigService
+  ) {
+    this.embeddingProfile = resolveEmbeddingProfile(
+      configService.get<string>('RTB_EMBEDDING_PROFILE')
+    );
+    this.requireDocumentEmbedding =
+      configService.get<string>(
+        'RTB_DENSE_RETRIEVAL_MODE',
+        'semantic_document'
+      ) ===
+      'semantic_document';
+  }
 
   @OnEvent('ml.model.ready')
   onModelReady(): void {
@@ -68,29 +88,30 @@ export class CampaignService {
       let embeddingQueued = 0;
 
       for (const campaign of campaigns) {
+        const cached = await this.campaignCacheRepository.findCampaignCacheById(
+          campaign.id
+        );
+        const campaignCache = this.mergeReusableEmbeddings(
+          this.convertToCachedCampaignType(campaign),
+          cached
+        );
+
         // Redis에 캐싱
         await this.campaignCacheRepository.saveCampaignCacheById(
           campaign.id,
-          this.convertToCachedCampaignType(campaign)
+          campaignCache
         );
 
         loaded++;
 
-        // 임베딩 생성 큐 추가 (campaignId만 전달, Worker가 Redis에서 태그 조회)
-        await this.embeddingQueue.add(
-          'generate-campaign-embedding',
-          {
-            campaignId: campaign.id,
-          },
-          {
-            jobId: `campaign-embedding-${campaign.id}`,
-            removeOnComplete: true,
-            removeOnFail: false,
-            attempts: 3,
+        if (!this.hasRequiredEmbeddings(campaignCache)) {
+          const queued = await this.enqueueInitialCampaignEmbedding(
+            campaign.id
+          );
+          if (queued) {
+            embeddingQueued++;
           }
-        );
-
-        embeddingQueued++;
+        }
 
         // 진행 상황 로깅 (100개당 1번)
         if (loaded % 100 === 0) {
@@ -107,6 +128,95 @@ export class CampaignService {
       this.logger.error('Campaign 로딩 중 에러 발생:', error);
       throw error;
     }
+  }
+
+  private mergeReusableEmbeddings(
+    campaign: CachedCampaign,
+    cached: CachedCampaign | null
+  ): CachedCampaign {
+    if (!campaign.tags || !cached?.embeddingTags) {
+      return campaign;
+    }
+
+    const sameModel =
+      cached.embeddingModelVersion === this.embeddingProfile.modelVersion ||
+      (this.embeddingProfile.name === 'legacy_minilm' &&
+        !cached.embeddingModelVersion);
+    if (!sameModel) {
+      return campaign;
+    }
+
+    const reusableEmbeddingTags = Object.fromEntries(
+      campaign.tags
+        .filter(
+          (tagName) =>
+            cached.embeddingTags?.[tagName]?.length ===
+            this.embeddingProfile.dimension
+        )
+        .map((tagName) => [tagName, cached.embeddingTags![tagName]])
+    );
+
+    if (Object.keys(reusableEmbeddingTags).length === 0) {
+      return campaign;
+    }
+
+    return {
+      ...campaign,
+      embeddingTags: reusableEmbeddingTags,
+      embeddingModelVersion: this.embeddingProfile.modelVersion,
+      ...(cached.embeddingDocument?.length === this.embeddingProfile.dimension
+        ? { embeddingDocument: cached.embeddingDocument }
+        : {}),
+    };
+  }
+
+  private hasRequiredEmbeddings(campaign: CachedCampaign): boolean {
+    const hasTags = Boolean(
+      campaign.tags?.length &&
+      campaign.tags.every(
+        (tagName) =>
+          campaign.embeddingTags?.[tagName]?.length ===
+          this.embeddingProfile.dimension
+      )
+    );
+    const sameModel =
+      campaign.embeddingModelVersion === this.embeddingProfile.modelVersion;
+    const hasDocument =
+      campaign.embeddingDocument?.length === this.embeddingProfile.dimension;
+    return Boolean(
+      hasTags && sameModel && (!this.requireDocumentEmbedding || hasDocument)
+    );
+  }
+
+  private async enqueueInitialCampaignEmbedding(
+    campaignId: string
+  ): Promise<boolean> {
+    const jobId = `campaign-embedding-${toEmbeddingNamespace(
+      this.embeddingProfile.modelVersion
+    )}-${campaignId}`;
+    const existingJob = await this.embeddingQueue.getJob(jobId);
+
+    if (existingJob) {
+      const state = await existingJob.getState();
+      // active/waiting/delayed만 중복 방지. completed·failed·unknown 잔여 jobId는
+      // embedding이 비어 있어도 재큐를 막아 document ANN 재색인이 스킵될 수 있다.
+      if (state === 'active' || state === 'waiting' || state === 'delayed') {
+        return false;
+      }
+      await existingJob.remove();
+    }
+
+    await this.embeddingQueue.add(
+      'generate-campaign-embedding',
+      { campaignId, modelVersion: this.embeddingProfile.modelVersion },
+      {
+        jobId,
+        removeOnComplete: true,
+        removeOnFail: false,
+        attempts: 3,
+      }
+    );
+    return true;
   }
 
   // 캠페인 생성 (태그 검증 + 날짜 유효성 체크 + 시작일 기준 상태 설정 + 크레딧 차감)
@@ -182,6 +292,7 @@ export class CampaignService {
 
       await this.embeddingQueue.add('generate-campaign-embedding', {
         campaignId: campaign.id,
+        modelVersion: this.embeddingProfile.modelVersion,
       });
       this.logger.log(`캠페인 ${campaign.id} 임베딩 재생성 큐 추가`);
 
@@ -437,17 +548,20 @@ export class CampaignService {
         }
       );
 
-      // 4. 태그 있으면 비교 후 임베딩 재생성
-      if (
+      // 4. semantic passage 구성요소(title/content/tags)가 바뀌면 재생성
+      const tagsChanged = Boolean(
         dto.tags &&
         cachedCampaign.tags &&
         !this.areTagsEqual(dto.tags, cachedCampaign.tags)
-      ) {
+      );
+      const semanticTextChanged = Boolean(dto.title || dto.content);
+      if (tagsChanged || semanticTextChanged) {
         await this.campaignCacheRepository.deleteCampaignEmbeddingById(
           campaignId
         );
         await this.embeddingQueue.add('generate-campaign-embedding', {
           campaignId,
+          modelVersion: this.embeddingProfile.modelVersion,
         });
         this.logger.log(`캠페인 ${campaignId} 임베딩 재생성 큐 추가`);
       }

@@ -2,6 +2,8 @@ import type {
   APIClient,
   DecisionRequest,
   DecisionResponse,
+  ContextObserveRequest,
+  ContextObserveResponse,
   SDKConfig,
   Tag,
 } from '@shared/types';
@@ -15,7 +17,8 @@ export class DecisionAPIClient implements APIClient {
     tags: Tag[],
     postUrl: string,
     behaviorScore: number = 0,
-    isHighIntent: boolean = false
+    isHighIntent: boolean = false,
+    contextId?: string
   ): Promise<DecisionResponse> {
     let requestBody: DecisionRequest;
 
@@ -26,6 +29,7 @@ export class DecisionAPIClient implements APIClient {
         postUrl,
         behaviorScore,
         isHighIntent,
+        ...(contextId ? { contextId } : {}),
       };
     } else {
       requestBody = {
@@ -34,6 +38,7 @@ export class DecisionAPIClient implements APIClient {
         postUrl,
         behaviorScore,
         isHighIntent,
+        ...(contextId ? { contextId } : {}),
       };
     }
 
@@ -64,6 +69,41 @@ export class DecisionAPIClient implements APIClient {
         },
         timestamp: new Date().toISOString(),
       };
+    }
+  }
+
+  async observeContext(
+    tags: Tag[],
+    postUrl: string,
+    title?: string,
+    body?: string
+  ): Promise<string | undefined> {
+    // decision 직전 pre-warm. FAILED/네트워크 에러면 undefined → tag-only decision
+    const requestBody: ContextObserveRequest = {
+      blogKey: this.config.blogKey,
+      postUrl,
+      title,
+      body,
+      tags: this.config.context
+        ? [this.config.context]
+        : tags.map((tag) => tag.name),
+    };
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/sdk/context/observe`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'include',
+        body: JSON.stringify(requestBody),
+      });
+      if (!response.ok) {
+        throw new Error(`Context API 오류: ${response.status}`);
+      }
+      const result = (await response.json()) as ContextObserveResponse;
+      return result.status === 'FAILED' ? undefined : result.contextId;
+    } catch (error) {
+      console.warn('[BoostAD SDK] context observe 실패, tag 경로 사용:', error);
+      return undefined;
     }
   }
 }

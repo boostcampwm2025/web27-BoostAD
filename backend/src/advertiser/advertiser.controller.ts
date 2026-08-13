@@ -1,9 +1,10 @@
-import { Controller, Get, Post, Req, Body, Query } from '@nestjs/common';
+import { Body, Controller, Get, Post, Query, Req } from '@nestjs/common';
 import { AdvertiserService } from './advertiser.service';
 import { successResponse } from 'src/common/response/success-response';
 import { type AuthenticatedRequest } from 'src/types/authenticated-request';
 import { KeywordStatsRequestDto } from './dto/keyword-stats-request.dto';
 import { ChargeCreditDto, GetCreditHistoryDto } from './dto/credit.dto';
+
 // import { Public } from 'src/auth/decorators/public.decorator';
 
 @Controller('advertiser')
@@ -18,6 +19,7 @@ export class AdvertiserController {
     return successResponse(stats, '광고주 대시보드 통계입니다.');
   }
 
+  // TODO: 안쓰이는 엔드포인트 제거
   @Post('credit/charge')
   async chargeCredit(
     @Req() req: AuthenticatedRequest,

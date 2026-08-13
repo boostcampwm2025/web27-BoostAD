@@ -1,6 +1,12 @@
 import {
+  BudgetReservationCandidate,
+  BudgetReservationResult,
   CachedCampaign,
   CachedCampaignWithoutSpent,
+  CampaignDocumentVectorSearchHit,
+  CampaignEmbeddingPayload,
+  CampaignTagVectorSearchHit,
+  CampaignTagVectorSearchOptions,
 } from '../types/campaign.types';
 
 export abstract class CampaignCacheRepository {
@@ -16,6 +22,7 @@ export abstract class CampaignCacheRepository {
   ): Promise<void>;
 
   abstract findCampaignCacheById(id: string): Promise<CachedCampaign | null>;
+  abstract findCampaignCachesByIds(ids: string[]): Promise<CachedCampaign[]>;
 
   // 상태만 업데이트 (embeddingTags 보존)
   abstract updateCampaignStatus(id: string, status: string): Promise<void>;
@@ -32,6 +39,10 @@ export abstract class CampaignCacheRepository {
     totalBudget: number | null
   ): Promise<boolean>;
 
+  abstract reserveFirstAvailable(
+    candidates: BudgetReservationCandidate[]
+  ): Promise<BudgetReservationResult | null>;
+
   // Spent 롤백 (비딩 패배 시)
   // dailySpent -= cpc, totalSpent -= cpc
   abstract decrementSpent(campaignId: string, cpc: number): Promise<void>;
@@ -45,6 +56,11 @@ export abstract class CampaignCacheRepository {
     embeddingTags: { [tagName: string]: number[] }
   ): Promise<void>;
 
+  abstract updateCampaignEmbeddings(
+    id: string,
+    payload: CampaignEmbeddingPayload
+  ): Promise<void>;
+
   abstract deleteCampaignCacheById(id: string): Promise<void>;
   abstract existsCampaignCacheById(id: string): Promise<boolean>;
 
@@ -55,4 +71,12 @@ export abstract class CampaignCacheRepository {
 
   // 일일 예산 리셋용 (자정 정산)
   abstract resetDailySpentCache(id: string): Promise<void>;
+
+  abstract searchCampaignTagVectors(
+    options: CampaignTagVectorSearchOptions
+  ): Promise<CampaignTagVectorSearchHit[]>;
+
+  abstract searchCampaignDocumentVectors(
+    options: CampaignTagVectorSearchOptions
+  ): Promise<CampaignDocumentVectorSearchHit[]>;
 }

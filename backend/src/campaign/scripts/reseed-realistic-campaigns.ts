@@ -3,6 +3,11 @@ import { randomUUID } from 'node:crypto';
 import { join } from 'node:path';
 import Redis from 'ioredis';
 import { Queue } from 'bullmq';
+import { resolveEmbeddingQueueName } from '../../queue/queue.names';
+import {
+  resolveEmbeddingProfile,
+  toEmbeddingNamespace,
+} from '../../rtb/ml/embedding-profile';
 import { DataSource, In } from 'typeorm';
 import { AVAILABLE_TAGS } from '../../common/constants';
 import { CampaignEntity, CampaignStatus } from '../entities/campaign.entity';
@@ -773,7 +778,13 @@ async function syncRedisAndQueue(
     port: envInt('REDIS_PORT', 16379),
   });
 
-  const queue = new Queue('embedding-queue', {
+  const embeddingProfile = resolveEmbeddingProfile(
+    process.env.RTB_EMBEDDING_PROFILE
+  );
+  const queue = new Queue(resolveEmbeddingQueueName(
+    process.env.RTB_EMBEDDING_PROFILE,
+    process.env.RTB_EMBEDDING_QUEUE_NAME
+  ), {
     connection: {
       host: process.env.REDIS_HOST || 'localhost',
       port: envInt('REDIS_PORT', 16379),
@@ -807,9 +818,14 @@ async function syncRedisAndQueue(
       await queue.addBulk(
         campaigns.map((campaign) => ({
           name: 'generate-campaign-embedding',
-          data: { campaignId: campaign.id },
+          data: {
+            campaignId: campaign.id,
+            modelVersion: embeddingProfile.modelVersion,
+          },
           opts: {
-            jobId: `campaign-embedding-${campaign.id}`,
+            jobId: `campaign-embedding-${toEmbeddingNamespace(
+              embeddingProfile.modelVersion
+            )}-${campaign.id}`,
             removeOnComplete: true,
             removeOnFail: false,
             attempts: 3,

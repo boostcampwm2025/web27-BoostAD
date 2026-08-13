@@ -23,6 +23,7 @@ export interface DecisionContext {
   blogId: number; // Guard에서 가져온 값 (중복 조회 방지)
   blogName: string; // Guard에서 가져온 값 (SSE 이벤트 DB 조회 제거용)
   tags: string[];
+  contextId?: string;
   postUrl: string;
   behaviorScore: number;
   isHighIntent: boolean;
@@ -33,12 +34,11 @@ export interface DecisionContext {
 //   name: string;
 // }
 
-export interface Candidate {
-  campaign: CachedCampaign; // Matcher가 Redis에서 조회한 CachedCampaign 반환
+export interface Candidate extends CachedCampaign {
   similarity: number;
 }
 
-export interface ScoredCandidate extends CachedCampaign {
+export interface ScoredCandidate extends Candidate {
   score: number;
 }
 

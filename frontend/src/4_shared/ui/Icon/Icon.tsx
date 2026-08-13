@@ -13,7 +13,7 @@ import Profile from '@shared/ui/Icon/icons/profile.svg?react';
 import Report from '@shared/ui/Icon/icons/report.svg?react';
 import Stop from '@shared/ui/Icon/icons/stop.svg?react';
 import Wallet from '@shared/ui/Icon/icons/wallet.svg?react';
-import Google from '@shared/ui/Icon/icons/google.svg?react';
+import Google from '../../../../../../openlog/frontend/public/google.svg?react';
 import Check from '@shared/ui/Icon/icons/check.svg?react';
 import Copy from '@shared/ui/Icon/icons/copy.svg?react';
 import Edit from '@shared/ui/Icon/icons/edit.svg?react';
