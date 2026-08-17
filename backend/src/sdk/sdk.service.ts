@@ -57,7 +57,7 @@ export class SdkService {
     const reservation =
       await this.campaignCacheRepository.getAuctionReservation(auctionId);
     if (reservation) {
-      return this.recordReservedView(dto, reservation);
+      return this.recordReservedView(dto, visitorId, reservation);
     }
 
     const auctionData = await this.cacheRepository.getAuctionData(auctionId);
@@ -246,6 +246,7 @@ export class SdkService {
 
   private async recordReservedView(
     dto: CreateViewLogDto,
+    visitorId: string,
     reservation: AuctionReservationRecord
   ): Promise<number> {
     if (!this.isActiveReservation(reservation)) {
@@ -262,15 +263,18 @@ export class SdkService {
       throw new BadRequestException('낙찰 캠페인 정보가 일치하지 않습니다.');
     }
 
-    const dedupResult =
-      await this.cacheRepository.acquireAuctionViewIdempotencyKey(
-        reservation.auctionId
-      );
+    const dedupResult = await this.cacheRepository.acquireViewIdempotencyKey(
+      dto.postUrl,
+      visitorId,
+      dto.isHighIntent
+    );
     if (dedupResult.status === 'exists') return dedupResult.viewId;
     if (dedupResult.status === 'locked') {
       const existingViewId =
-        await this.cacheRepository.getAuctionViewIdByIdempotencyKey(
-          reservation.auctionId
+        await this.cacheRepository.getViewIdByIdempotencyKey(
+          dto.postUrl,
+          visitorId,
+          dto.isHighIntent
         );
       if (existingViewId !== null) return existingViewId;
       throw new ConflictException('중복 요청 처리 중입니다.');
@@ -286,8 +290,10 @@ export class SdkService {
       isHighIntent: dto.isHighIntent,
       behaviorScore: dto.behaviorScore,
     });
-    await this.cacheRepository.setAuctionViewIdempotencyKey(
-      reservation.auctionId,
+    await this.cacheRepository.setViewIdempotencyKey(
+      dto.postUrl,
+      visitorId,
+      dto.isHighIntent,
       viewId
     );
     return viewId;

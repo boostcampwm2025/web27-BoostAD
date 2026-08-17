@@ -43,11 +43,11 @@ function buildHarness() {
   };
   const cacheRepository = {
     getAuctionData: jest.fn(),
-    acquireAuctionViewIdempotencyKey: jest
+    acquireViewIdempotencyKey: jest
       .fn()
       .mockResolvedValue({ status: 'acquired' }),
-    setAuctionViewIdempotencyKey: jest.fn(),
-    getAuctionViewIdByIdempotencyKey: jest.fn().mockResolvedValue(null),
+    setViewIdempotencyKey: jest.fn(),
+    getViewIdByIdempotencyKey: jest.fn().mockResolvedValue(null),
     getRollbackInfo: jest.fn().mockResolvedValue(null),
     getRollbackBackup: jest.fn().mockResolvedValue(null),
     setRollbackInfo: jest.fn(),
@@ -127,9 +127,12 @@ describe('SdkService auction reservation lifecycle', () => {
         cost: reservation.cost,
       })
     );
-    expect(
-      harness.cacheRepository.setAuctionViewIdempotencyKey
-    ).toHaveBeenCalledWith(reservation.auctionId, 42);
+    expect(harness.cacheRepository.setViewIdempotencyKey).toHaveBeenCalledWith(
+      'https://example.com/post',
+      'visitor-1',
+      false,
+      42
+    );
     expect(harness.cacheRepository.getAuctionData).not.toHaveBeenCalled();
     expect(harness.cacheRepository.setRollbackInfo).not.toHaveBeenCalled();
     expect(harness.cacheRepository.setRollbackBackup).not.toHaveBeenCalled();
