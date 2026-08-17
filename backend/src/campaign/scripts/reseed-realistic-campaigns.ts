@@ -74,6 +74,7 @@ const REDIS_CLEANUP_PATTERNS = [
   'backup:rollback:view:*',
   'dedup:view:*',
   'dedup:click:*',
+  'rtb:reservation:expirations',
 ];
 
 const THEMES: Record<ThemeId, Theme> = {
@@ -724,6 +725,11 @@ function toCachedCampaign(campaign: CampaignEntity) {
     totalBudget: campaign.totalBudget ?? null,
     dailySpent: campaign.dailySpent,
     totalSpent: campaign.totalSpent,
+    dailyReserved: 0,
+    totalReserved: 0,
+    dailyReservedDate: new Date(Date.now() + 9 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10),
     lastResetDate: campaign.lastResetDate.toISOString(),
     isHighIntent: campaign.isHighIntent,
     status: campaign.status,

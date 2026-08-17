@@ -1,4 +1,6 @@
 import {
+  AuctionReservationRecord,
+  AuctionTransitionResult,
   BudgetReservationCandidate,
   BudgetReservationResult,
   CachedCampaign,
@@ -7,13 +9,20 @@ import {
   CampaignEmbeddingPayload,
   CampaignTagVectorSearchHit,
   CampaignTagVectorSearchOptions,
+  ReserveAuctionRequest,
+  ReserveAuctionResult,
 } from '../types/campaign.types';
+
+export type CampaignCacheSaveOptions = {
+  preserveReservation?: boolean;
+};
 
 export abstract class CampaignCacheRepository {
   abstract saveCampaignCacheById(
     id: string,
     data: CachedCampaign,
-    ttl?: number
+    ttl?: number,
+    options?: CampaignCacheSaveOptions
   ): Promise<void>;
 
   abstract updateCampaignWithoutCachedById(
@@ -29,6 +38,12 @@ export abstract class CampaignCacheRepository {
 
   abstract updateDailySpentCacheById(id: string, amount: number): Promise<void>;
 
+  abstract replaceSpentCacheById(
+    id: string,
+    dailySpent: number,
+    totalSpent: number
+  ): Promise<void>;
+
   // 선제적 Spent 증가 (원자적 예산 검증 + 증가)
   // 예산 검증 통과 시 dailySpent += cpc, totalSpent += cpc 후 true 반환
   // 예산 초과 시 증가 없이 false 반환
@@ -37,6 +52,30 @@ export abstract class CampaignCacheRepository {
   abstract reserveFirstAvailable(
     candidates: BudgetReservationCandidate[]
   ): Promise<BudgetReservationResult | null>;
+
+  abstract reserveAuction(
+    request: ReserveAuctionRequest
+  ): Promise<ReserveAuctionResult>;
+
+  abstract getAuctionReservation(
+    auctionId: string
+  ): Promise<AuctionReservationRecord | null>;
+
+  abstract commitAuction(
+    auctionId: string,
+    currentBudgetDate: string,
+    terminalTtlSeconds: number
+  ): Promise<AuctionTransitionResult>;
+
+  abstract releaseAuction(
+    auctionId: string,
+    terminalTtlSeconds: number
+  ): Promise<AuctionTransitionResult>;
+
+  abstract findExpiredAuctionIds(
+    nowEpochMs: number,
+    limit: number
+  ): Promise<string[]>;
 
   // Spent 롤백 (비딩 패배 시)
   // dailySpent -= cpc, totalSpent -= cpc
