@@ -51,6 +51,25 @@ export abstract class CacheRepository {
     isHighIntent: boolean
   ): Promise<number | null>;
 
+  abstract acquireAuctionViewIdempotencyKey(
+    auctionId: string,
+    ttlMs?: number
+  ): Promise<
+    | { status: 'acquired' }
+    | { status: 'exists'; viewId: number }
+    | { status: 'locked' }
+  >;
+
+  abstract setAuctionViewIdempotencyKey(
+    auctionId: string,
+    viewId: number,
+    ttlMs?: number
+  ): Promise<void>;
+
+  abstract getAuctionViewIdByIdempotencyKey(
+    auctionId: string
+  ): Promise<number | null>;
+
   abstract setClickIdempotencyKey(
     viewId: number,
     ttlMs?: number

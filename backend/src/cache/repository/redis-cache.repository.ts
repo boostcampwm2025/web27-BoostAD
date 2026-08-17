@@ -127,6 +127,49 @@ export class RedisCacheRepository extends CacheRepository {
     return viewId;
   }
 
+  async acquireAuctionViewIdempotencyKey(
+    auctionId: string,
+    ttlMs: number = this.VIEW_IDEMPOTENCY_TTL_MS
+  ): Promise<
+    | { status: 'acquired' }
+    | { status: 'exists'; viewId: number }
+    | { status: 'locked' }
+  > {
+    const key = this.getAuctionViewIdempotencyKey(auctionId);
+    const result = await this.redis.set(key, 'LOCK', 'PX', ttlMs, 'NX');
+    if (result === 'OK') return { status: 'acquired' };
+
+    const existingValue = await this.redis.get(key);
+    if (!existingValue) return { status: 'locked' };
+    const existingViewId = Number(existingValue);
+    if (Number.isNaN(existingViewId)) return { status: 'locked' };
+    return { status: 'exists', viewId: existingViewId };
+  }
+
+  async setAuctionViewIdempotencyKey(
+    auctionId: string,
+    viewId: number,
+    ttlMs: number = this.VIEW_IDEMPOTENCY_TTL_MS
+  ): Promise<void> {
+    await this.redis.set(
+      this.getAuctionViewIdempotencyKey(auctionId),
+      String(viewId),
+      'PX',
+      ttlMs
+    );
+  }
+
+  async getAuctionViewIdByIdempotencyKey(
+    auctionId: string
+  ): Promise<number | null> {
+    const value = await this.redis.get(
+      this.getAuctionViewIdempotencyKey(auctionId)
+    );
+    if (!value) return null;
+    const viewId = Number(value);
+    return Number.isNaN(viewId) ? null : viewId;
+  }
+
   // 이미 있는 값이면 true, 최초면 false return
   async setClickIdempotencyKey(
     viewId: number,
@@ -191,6 +234,10 @@ export class RedisCacheRepository extends CacheRepository {
 
   private getAuctionKey(auctionId: string): string {
     return `auction:${auctionId}`;
+  }
+
+  private getAuctionViewIdempotencyKey(auctionId: string): string {
+    return `dedup:view:auction:${auctionId}`;
   }
 
   private getOAuthStateKey(state: string): string {

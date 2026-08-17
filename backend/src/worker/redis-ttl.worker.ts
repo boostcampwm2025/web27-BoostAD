@@ -10,20 +10,52 @@ import { IOREDIS_CLIENT } from 'src/redis/redis.constant';
 import type { AppIORedisClient } from 'src/redis/redis.type';
 import { CacheRepository } from '../cache/repository/cache.repository.interface';
 import { CampaignCacheRepository } from 'src/campaign/repository/campaign.cache.repository.interface';
+import { ConfigService } from '@nestjs/config';
+import { AUCTION_TERMINAL_TTL_SECONDS } from 'src/campaign/constants/auction-reservation.constants';
 
 // TTL 만료 이벤트를 감지하여 롤백을 수행하는 Worker
 @Injectable()
 export class RedisTTLWorker implements OnModuleInit, OnModuleDestroy {
   private readonly logger = new Logger(RedisTTLWorker.name);
   private subscriber: Redis | null = null;
+  private reservationSweepTimer: NodeJS.Timeout | null = null;
+  private reservationSweepRunning = false;
+  private readonly reservationSweepIntervalMs: number;
+  private readonly reservationSweepBatchSize: number;
+  private readonly reservationSweepTimeBudgetMs: number;
+  private readonly reservationSweepMaxBatches: number;
+  private readonly auctionTerminalTtlSeconds: number;
 
   constructor(
     @Inject(IOREDIS_CLIENT) private readonly ioRedisClient: AppIORedisClient,
     private readonly cacheRepository: CacheRepository,
-    private readonly campaignCacheRepository: CampaignCacheRepository
-  ) {}
+    private readonly campaignCacheRepository: CampaignCacheRepository,
+    private readonly configService: ConfigService
+  ) {
+    this.reservationSweepIntervalMs = this.getPositiveIntConfig(
+      'RTB_RESERVATION_SWEEP_INTERVAL_MS',
+      1_000
+    );
+    this.reservationSweepBatchSize = this.getPositiveIntConfig(
+      'RTB_RESERVATION_SWEEP_BATCH_SIZE',
+      100
+    );
+    this.reservationSweepTimeBudgetMs = this.getPositiveIntConfig(
+      'RTB_RESERVATION_SWEEP_TIME_BUDGET_MS',
+      200
+    );
+    this.reservationSweepMaxBatches = this.getPositiveIntConfig(
+      'RTB_RESERVATION_SWEEP_MAX_BATCHES',
+      10
+    );
+    this.auctionTerminalTtlSeconds = this.getPositiveIntConfig(
+      'RTB_AUCTION_TERMINAL_TTL_SECONDS',
+      AUCTION_TERMINAL_TTL_SECONDS
+    );
+  }
 
   async onModuleInit() {
+    this.startReservationSweep();
     try {
       // Keyspace Notification 활성화
       await this.ioRedisClient.config('SET', 'notify-keyspace-events', 'Ex');
@@ -48,6 +80,10 @@ export class RedisTTLWorker implements OnModuleInit, OnModuleDestroy {
   }
 
   async onModuleDestroy() {
+    if (this.reservationSweepTimer) {
+      clearInterval(this.reservationSweepTimer);
+      this.reservationSweepTimer = null;
+    }
     if (this.subscriber) {
       await this.subscriber.unsubscribe('__keyevent@0__:expired');
       this.subscriber.disconnect();
@@ -89,5 +125,64 @@ export class RedisTTLWorker implements OnModuleInit, OnModuleDestroy {
     } catch (error) {
       this.logger.error(`[TTL Worker] 롤백 실패: viewId=${viewId}`, error);
     }
+  }
+
+  private startReservationSweep(): void {
+    void this.sweepExpiredReservations();
+    this.reservationSweepTimer = setInterval(() => {
+      void this.sweepExpiredReservations();
+    }, this.reservationSweepIntervalMs);
+    this.reservationSweepTimer.unref();
+  }
+
+  async sweepExpiredReservations(): Promise<void> {
+    if (this.reservationSweepRunning) return;
+    this.reservationSweepRunning = true;
+    const deadline = Date.now() + this.reservationSweepTimeBudgetMs;
+
+    try {
+      for (
+        let batch = 0;
+        batch < this.reservationSweepMaxBatches && Date.now() <= deadline;
+        batch += 1
+      ) {
+        const auctionIds =
+          await this.campaignCacheRepository.findExpiredAuctionIds(
+            Date.now(),
+            this.reservationSweepBatchSize
+          );
+        if (auctionIds.length === 0) break;
+
+        const results = await Promise.allSettled(
+          auctionIds.map((auctionId) =>
+            this.campaignCacheRepository.releaseAuction(
+              auctionId,
+              this.auctionTerminalTtlSeconds
+            )
+          )
+        );
+        results.forEach((result, index) => {
+          if (result.status === 'rejected') {
+            this.logger.error(
+              `[Reservation Worker] 예약 해제 실패: auction=${auctionIds[index]}`,
+              result.reason
+            );
+          }
+        });
+
+        if (auctionIds.length < this.reservationSweepBatchSize) break;
+      }
+    } catch (error) {
+      this.logger.error('[Reservation Worker] expiration sweep 실패', error);
+    } finally {
+      this.reservationSweepRunning = false;
+    }
+  }
+
+  private getPositiveIntConfig(name: string, fallback: number): number {
+    const parsed = Number(this.configService.get<string>(name));
+    return Number.isFinite(parsed) && parsed > 0
+      ? Math.floor(parsed)
+      : fallback;
   }
 }

@@ -21,6 +21,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { BidLogJobData } from '../queue/types/queue.type';
 import { ConfigService } from '@nestjs/config';
+import { AUCTION_RESERVATION_TTL_MS } from '../campaign/constants/auction-reservation.constants';
+import type { ActiveAuctionReservation } from '../campaign/types/campaign.types';
 
 type BudgetMode = 'legacy_topk' | 'winner_only';
 
@@ -32,6 +34,7 @@ export class RTBService {
     'c1dda7a5-da58-416b-b8fa-20ba8f5535f9';
   private readonly TOP_K = 10;
   private readonly budgetMode: BudgetMode;
+  private readonly auctionReservationTtlMs: number;
 
   constructor(
     private readonly matcher: Matcher,
@@ -45,6 +48,10 @@ export class RTBService {
   ) {
     this.budgetMode = this.resolveBudgetMode(
       this.configService.get<string>('RTB_BUDGET_MODE', 'legacy_topk')
+    );
+    this.auctionReservationTtlMs = this.getPositiveIntConfig(
+      'RTB_AUCTION_RESERVATION_TTL_MS',
+      AUCTION_RESERVATION_TTL_MS
     );
   }
 
@@ -125,19 +132,21 @@ export class RTBService {
 
       const result =
         this.budgetMode === 'winner_only'
-          ? await this.runWinnerOnlyReservation(candidates)
+          ? await this.runWinnerOnlyReservation(auctionId, blogId, candidates)
           : await this.runLegacyTopKReservation(auctionId, candidates);
 
-      // [4. 경매 결과 캐시 저장]
-      // 후속 ViewLog가 노출 경매를 조회할 수 있도록 blogId와 낙찰 비용을 auctionId에 연결한다.
-      await this.measureStage('cache_auction', () =>
-        this.measureDependency('redis', 'set_auction_data', () =>
-          this.cacheRepository.setAuctionData(auctionId, {
-            blogId: blogId,
-            cost: result.winner.maxCpc,
-          })
-        )
-      );
+      // [4. legacy 경매 결과 캐시 저장]
+      // winner_only는 예약 Lua가 같은 auction 키에 versioned 예약 정보를 이미 저장한다.
+      if (this.budgetMode === 'legacy_topk') {
+        await this.measureStage('cache_auction', () =>
+          this.measureDependency('redis', 'set_auction_data', () =>
+            this.cacheRepository.setAuctionData(auctionId, {
+              blogId: blogId,
+              cost: result.winner.maxCpc,
+            })
+          )
+        );
+      }
 
       // [5. 입찰 로그 작업 생성]
       // 예산 모드가 반환한 후보 목록을 winner/loser 상태로 변환해 비동기 저장 큐에 넣는다.
@@ -224,6 +233,8 @@ export class RTBService {
    * 점수순으로 후보를 정렬한 뒤 예산 확보가 가능한 첫 캠페인 하나만 예약한다.
    */
   private async runWinnerOnlyReservation(
+    auctionId: string,
+    blogId: number,
     candidates: ScoredCandidate[]
   ): Promise<SelectionResult> {
     // [1. 후보 순위 확정]
@@ -235,7 +246,7 @@ export class RTBService {
     // [2. winner 한 건 예약]
     // 정렬된 순서대로 확인하며 예산 확보가 가능한 첫 캠페인에서 탐색을 종료한다.
     const winner = await this.measureStage('reserve', () =>
-      this.reserveFirstRankedCandidate(ranked.candidates)
+      this.reserveFirstRankedCandidate(auctionId, blogId, ranked.candidates)
     );
 
     // [종료 분기: 모든 후보의 예산 확보 실패]
@@ -368,11 +379,19 @@ export class RTBService {
   }
 
   private async reserveFirstRankedCandidate(
+    auctionId: string,
+    blogId: number,
     rankedCandidates: ScoredCandidate[]
   ): Promise<ScoredCandidate | null> {
     // [1. 탐색량 집계 초기화]
     let attemptedCandidateCount = 0;
     let attemptedWindowCount = 0;
+    const nowMs = Date.now();
+    const budgetDate = this.getKstBudgetDate(nowMs);
+    const expiresAt = Math.min(
+      nowMs + this.auctionReservationTtlMs,
+      this.getNextKstMidnightEpochMs(nowMs)
+    );
 
     // [2. 순위 후보를 Top-K window 단위로 탐색]
     // 한 window가 모두 소진됐을 때만 다음 순위 window로 이동한다.
@@ -383,30 +402,42 @@ export class RTBService {
 
       // [2-1. 현재 window 예약]
       // Redis가 전달된 순서대로 검사하고 예산 확보가 가능한 첫 캠페인 하나만 예약한다.
-      const reserved = await this.campaignCacheRepository.reserveFirstAvailable(
-        window.map((candidate) => ({
+      const reserved = await this.campaignCacheRepository.reserveAuction({
+        auctionId,
+        blogId,
+        budgetDate,
+        expiresAt,
+        candidates: window.map((candidate) => ({
           campaignId: candidate.id,
           cpc: candidate.maxCpc,
-        }))
-      );
-      const checkedInWindow = reserved?.attemptedCount ?? window.length;
+        })),
+      });
+      const checkedInWindow = reserved.attemptedCount;
       attemptedCandidateCount += checkedInWindow;
+      const reservationSucceeded =
+        reserved.outcome === 'reserved' || reserved.outcome === 'existing';
 
       this.metricsService.recordDependency(
         'redis',
-        'reserve_first_available',
-        reserved ? 'ok' : 'rejected',
+        'reserve_auction',
+        reservationSucceeded ? 'ok' : 'rejected',
         this.elapsedMs(dependencyStartedAt)
       );
       this.metricsService.incRtbReservationFailure(
         'rejected',
-        reserved ? Math.max(0, checkedInWindow - 1) : checkedInWindow
+        reservationSucceeded
+          ? Math.max(0, checkedInWindow - 1)
+          : checkedInWindow
       );
 
       // [성공 분기: 예약된 ID를 원본 후보 객체로 복원]
-      if (reserved) {
-        const winner = window.find(
-          (candidate) => candidate.id === reserved.campaignId
+      if (reservationSucceeded) {
+        const reservation = reserved.reservation;
+        if (!this.isActiveReservation(reservation)) {
+          throw new Error('winner-only 예약 상태가 이미 종료되었습니다');
+        }
+        const winner = rankedCandidates.find(
+          (candidate) => candidate.id === reservation.campaignId
         );
 
         // Redis 결과와 현재 window가 어긋나면 잘못된 winner를 반환하지 않고 중단한다.
@@ -421,6 +452,10 @@ export class RTBService {
           1
         );
         return winner;
+      }
+
+      if (reserved.outcome === 'conflict') {
+        throw new Error('auctionId가 기존 legacy 경매 데이터와 충돌했습니다');
       }
     }
 
@@ -560,5 +595,41 @@ export class RTBService {
       );
     }
     return 'legacy_topk';
+  }
+
+  private isActiveReservation(
+    reservation: unknown
+  ): reservation is ActiveAuctionReservation {
+    return (
+      typeof reservation === 'object' &&
+      reservation !== null &&
+      'status' in reservation &&
+      reservation.status === 'RESERVED' &&
+      'campaignId' in reservation &&
+      typeof reservation.campaignId === 'string'
+    );
+  }
+
+  private getPositiveIntConfig(name: string, fallback: number): number {
+    const parsed = Number(this.configService.get<string>(name));
+    return Number.isFinite(parsed) && parsed > 0
+      ? Math.floor(parsed)
+      : fallback;
+  }
+
+  private getKstBudgetDate(epochMs: number): string {
+    return new Date(epochMs + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+
+  private getNextKstMidnightEpochMs(epochMs: number): number {
+    const shifted = new Date(epochMs + 9 * 60 * 60 * 1000);
+    return (
+      Date.UTC(
+        shifted.getUTCFullYear(),
+        shifted.getUTCMonth(),
+        shifted.getUTCDate() + 1
+      ) -
+      9 * 60 * 60 * 1000
+    );
   }
 }
