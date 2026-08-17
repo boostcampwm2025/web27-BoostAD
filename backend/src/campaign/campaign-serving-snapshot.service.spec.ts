@@ -76,6 +76,16 @@ describe('CampaignServingSnapshotService', () => {
     expect(first.map((item) => item.id)).toEqual(['c1']);
     expect(second.map((item) => item.id)).toEqual(['c1']);
     expect(first[0].embeddingTags?.tag).toBeInstanceOf(Float32Array);
+    for (const excludedField of [
+      'dailyBudget',
+      'totalBudget',
+      'dailySpent',
+      'totalSpent',
+      'lastResetDate',
+      'createdAt',
+    ]) {
+      expect(first[0]).not.toHaveProperty(excludedField);
+    }
     expect(repository.getAllCampaigns).toHaveBeenCalledTimes(1);
     expect(repository.findCampaignCachesByIds).not.toHaveBeenCalled();
   });

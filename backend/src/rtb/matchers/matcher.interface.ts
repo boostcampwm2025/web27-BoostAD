@@ -4,10 +4,10 @@ export type QualityRetrievalMode = 'dense_only' | 'hybrid';
 
 export abstract class Matcher {
   /**
-   * Redis에 저장된 캠페인 데이터들을 바탕으로 Active, IsHighIntent, 날짜 범위,
-   * 벡터 유사도 기반 후보를 찾고 최종 점수까지 계산해 반환한다. (예산검증x)
+   * 요청 컨텍스트와 일치하는 캠페인을 조회하고 집행 자격과 매칭 점수를 반영해 반환한다.
+   * 예산 검증과 예약은 호출부의 책임이다.
    */
-  abstract findCandidatesByTags(
+  abstract matchCandidates(
     context: DecisionContext
   ): Promise<ScoredCandidate[]>;
 
@@ -19,6 +19,6 @@ export abstract class Matcher {
     context: DecisionContext,
     _mode: QualityRetrievalMode = 'dense_only'
   ): Promise<ScoredCandidate[]> {
-    return this.findCandidatesByTags(context);
+    return this.matchCandidates(context);
   }
 }

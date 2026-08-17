@@ -45,7 +45,7 @@ describe('QualityBenchmarkService', () => {
     reserveFirstAvailable: jest.Mock;
   };
   let matcher: {
-    findCandidatesByTags: jest.Mock;
+    matchCandidates: jest.Mock;
     findQualityRankings: jest.Mock;
   };
   let contextEmbeddingService: {
@@ -99,7 +99,7 @@ describe('QualityBenchmarkService', () => {
         score: 86,
       }));
     matcher = {
-      findCandidatesByTags: jest.fn(async () => scored()),
+      matchCandidates: jest.fn(async () => scored()),
       findQualityRankings: jest.fn(async () => scored()),
     };
     contextEmbeddingService = {

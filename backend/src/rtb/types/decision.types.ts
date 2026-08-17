@@ -1,4 +1,5 @@
-import type { CachedCampaign, Tag } from '../../campaign/types/campaign.types';
+import type { Tag } from '../../campaign/types/campaign.types';
+import type { ServingCampaign } from '../../campaign/serving-campaign';
 
 export interface Campaign {
   id: string;
@@ -34,7 +35,10 @@ export interface DecisionContext {
 //   name: string;
 // }
 
-export interface Candidate extends CachedCampaign {
+export interface Candidate extends Omit<
+  ServingCampaign,
+  'embeddingTags' | 'embeddingDocument' | 'embeddingModelVersion'
+> {
   similarity: number;
 }
 

@@ -5,12 +5,12 @@ import {
   CampaignServingSnapshotService,
   type ServingCampaign,
 } from '../../campaign/campaign-serving-snapshot.service';
+import { toServingCampaign } from '../../campaign/serving-campaign';
 import { MLEngine } from '../ml/mlEngine.interface';
 import { RequestEmbeddingCacheService } from '../ml/request-embedding-cache.service';
 import type { EmbeddingPendingReason } from '../ml/request-embedding-cache.service';
 import { ContextEmbeddingService } from '../context/context-embedding.service';
 import type { DecisionContext, ScoredCandidate } from '../types/decision.types';
-import type { CachedCampaign } from '../../campaign/types/campaign.types';
 import { MetricsService } from '../../metrics/metrics.service';
 import {
   createRtbPathLogger,
@@ -21,8 +21,8 @@ import {
   fuseHybridRankings,
   type RetrievalHit,
 } from '../retrieval/hybrid-retrieval.fusion';
+import { createCandidate } from '../candidate.factory';
 
-type MatchableCampaign = CachedCampaign | ServingCampaign;
 type DenseRetrievalMode = 'legacy_tag' | 'semantic_document';
 type RetrievalMode = 'dense_only' | 'hybrid';
 
@@ -161,26 +161,30 @@ export class TransformerMatcher extends Matcher {
   }
 
   /**
-   * 후보 캠페인 조회 (예산 검증 X).
+   * 요청 컨텍스트에 맞는 캠페인을 검색·필터링·채점한다. 예산은 검증하지 않는다.
+   * ANN이 켜져 있으면 설정된 dense retrieval 경로로 후보를 좁히고,
+   * 꺼져 있으면 전체 캠페인을 조회해 자격 필터링과 태그 기반 채점을 수행한다.
    *
-   * Phase 3 분기 요약:
-   *  1) contextId + READY  → 글 embedding으로 ANN
-   *  2) contextId + PENDING/FAILED → lexical fallback (기다리지 않음)
-   *  3) contextId 없음 + cold-miss ON → tag L1/L2 hit면 ANN, miss면 lexical + background warm-up
-   *  4) cold-miss OFF → 기존처럼 resolve()로 runtime까지 await
+   * 요청 임베딩 확보 우선순위:
+   *  1) contextId가 있으면 사전 생성된 글 임베딩 사용
+   *  2) cold-miss fast path에서는 태그 임베딩 캐시 hit만 사용
+   *  3) 구 동기 경로에서는 캐시 miss 시 runtime 생성을 기다림
    */
-  async findCandidatesByTags(
-    context: DecisionContext
-  ): Promise<ScoredCandidate[]> {
+  async matchCandidates(context: DecisionContext): Promise<ScoredCandidate[]> {
+    // [1. 매칭 입력 준비]
+    // 요청 태그를 정규화한 텍스트·문자열·토큰 형태로 준비한다.
+    // 임베딩은 semantic 검색에, 정규화 문자열과 토큰은 legacy 태그 재채점에 사용한다.
     const requestText = this.buildRequestText(context.tags);
     const requestNorm = this.normalizeText(requestText);
     const requestTokens = new Set(this.tokenizeText(requestText));
 
+    // [종료 분기 A: ML 모델 미준비]
+    // fast path가 켜져 있으면 모델 없이 lexical 후보를 반환하고, 아니면 빈 결과를 반환한다.
     if (!this.mlEngine.isReady()) {
-      // 모델 로딩 전이라도 광고는 나가야 하면 태그 문자열 매칭으로 응답
       if (this.coldMissFastPathEnabled) {
         return this.findCandidatesByLexicalFallback(context, 'model_not_ready');
       }
+
       this.metricsService.incRtbFallback('matcher_empty');
       if (this.logsEnabled) {
         this.logger.warn('ML 모델이 준비가 안 되었습니다.');
@@ -188,53 +192,69 @@ export class TransformerMatcher extends Matcher {
       return [];
     }
 
+    // [2. 요청 임베딩 확보]
+    // context 임베딩을 우선 사용하고, 불가능할 때 설정에 따라 캐시 fast path 또는 동기 경로를 사용한다.
     let requestEmbedding: number[];
     const requestEmbeddingStartedAt = process.hrtime.bigint();
+
     try {
-      // (1) SDK observe가 넘겨준 contextId 우선
+      // [분기 B-1: 사전 생성된 context 임베딩]
+      // SDK observe 단계에서 발급한 contextId가 있으면 포스트 문맥 임베딩 상태를 조회한다.
       if (this.contextDecisionEnabled && context.contextId) {
         const contextResult =
           await this.contextEmbeddingService.resolveForDecision(
             context.contextId
           );
+
         this.metricsService.recordRtbContextDecision(contextResult.status);
+
+        // context 임베딩을 기다리지 않고 PENDING/FAILED 상태는 즉시 lexical 경로로 전환한다.
         if (contextResult.status !== 'READY') {
-          // 첫 방문 PENDING이 여기로 옴 → Xenova 대기 없이 lexical
           this.metricsService.recordRtbStage(
             'match_request_embedding',
             'fallback',
             this.elapsedMs(requestEmbeddingStartedAt)
           );
+
           return this.findCandidatesByLexicalFallback(
             context,
             `context_${contextResult.status.toLowerCase()}`
           );
         }
+
         requestEmbedding = contextResult.embedding;
         this.metricsService.incRtbEmbeddingSource('context');
       } else if (this.coldMissFastPathEnabled) {
-        // (2) 태그 캐시만 조회. miss면 pending + 백그라운드 생성, 이번 요청은 lexical
+        // [분기 B-2: deprecated cold-miss fast path]
+        // 태그 임베딩 캐시 hit만 즉시 사용한다. miss면 생성을 예약하고 현재 요청은 lexical로 처리한다.
         const resolved =
           await this.requestEmbeddingCache.resolveCachedOrSchedule(requestText);
+
         if (resolved.status === 'pending') {
           this.metricsService.recordRtbStage(
             'match_request_embedding',
             'fallback',
             this.elapsedMs(requestEmbeddingStartedAt)
           );
+
           return this.findCandidatesByLexicalFallback(context, resolved.reason);
         }
         requestEmbedding = resolved.embedding;
       } else {
-        // (3) flag off: 캐시 miss여도 runtime까지 기다림 (구 Phase 3A 동기 경로)
+        // [분기 B-3: deprecated 동기 임베딩 경로]
+        // 캐시 miss가 발생해도 runtime 임베딩 생성이 끝날 때까지 기다린다.
         requestEmbedding = await this.getEmbeddingCached(requestText);
       }
+
+      // 세 임베딩 경로 중 하나가 정상적으로 벡터를 확보한 경우에만 ok로 기록한다.
       this.metricsService.recordRtbStage(
         'match_request_embedding',
         'ok',
         this.elapsedMs(requestEmbeddingStartedAt)
       );
     } catch (error) {
+      // [오류 분기 B-4: 요청 임베딩 확보 실패]
+      // fast path에서는 lexical로 복구하고, 동기 경로에서는 오류를 기록한 뒤 빈 결과를 반환한다.
       if (this.coldMissFastPathEnabled) {
         this.metricsService.recordRtbStage(
           'match_request_embedding',
@@ -258,6 +278,8 @@ export class TransformerMatcher extends Matcher {
       return [];
     }
 
+    // [3. 후보 검색 방식 분기]
+    // ANN 모드는 dense 설정에 따라 semantic document 또는 legacy tag 검색으로 진입한다.
     if (this.annEnabled) {
       return this.findCandidatesByAnn(
         context,
@@ -267,16 +289,20 @@ export class TransformerMatcher extends Matcher {
       );
     }
 
-    // Redis에서 모든 캠페인 조회 (캐시 우선 전략)
+    // [4. ANN OFF: 전체 캠페인 조회]
+    // 후보 축소 인덱스를 사용하지 않으므로 Redis에서 모든 캠페인을 불러온다.
     const getAllCampaignsStartedAt = process.hrtime.bigint();
-    const allCampaigns = await this.campaignCacheRepo.getAllCampaigns();
+    const allCampaigns = (await this.campaignCacheRepo.getAllCampaigns()).map(
+      toServingCampaign
+    );
     this.metricsService.recordRtbStage(
       'match_get_all_campaigns',
       'ok',
       this.elapsedMs(getAllCampaignsStartedAt)
     );
 
-    // 비딩 자격 필터링: ACTIVE + 날짜 범위 + deletedAt + embeddingTags + isHighIntent 존재
+    // [5. ANN OFF: 집행 자격 필터링]
+    // ACTIVE/집행 기간/삭제/high-intent/태그 임베딩 조건을 만족하는 캠페인만 남긴다.
     const filterEligibleStartedAt = process.hrtime.bigint();
     const eligibleCampaigns = this.filterEligibleCampaigns(
       allCampaigns,
@@ -291,6 +317,7 @@ export class TransformerMatcher extends Matcher {
       eligibleCampaigns.length
     );
 
+    // [종료 분기 C: 집행 가능한 캠페인 없음]
     if (eligibleCampaigns.length === 0) {
       this.metricsService.incRtbFallback('matcher_empty');
       if (this.logsEnabled) {
@@ -299,6 +326,8 @@ export class TransformerMatcher extends Matcher {
       return [];
     }
 
+    // [6. ANN OFF: 태그 기반 재채점]
+    // 전체 자격 캠페인의 유사도·coverage·exact match를 계산하고 임계값 통과 후보를 반환한다.
     return this.scoreEligibleCampaigns(
       eligibleCampaigns,
       requestEmbedding,
@@ -351,29 +380,29 @@ export class TransformerMatcher extends Matcher {
         const coverage =
           requestTags.size === 0 ? 0 : exactMatchCount / requestTags.size;
         return {
-          ...campaign,
-          embeddingTags: undefined,
-          embeddingDocument: undefined,
-          similarity: coverage,
-          score: exactMatchCount * 100 + coverage * 10,
+          campaign,
+          coverage,
           exactMatchCount,
         };
       })
-      .filter((candidate) => candidate.exactMatchCount > 0)
+      .filter((item) => item.exactMatchCount > 0)
       .sort((a, b) => {
         if (b.exactMatchCount !== a.exactMatchCount) {
           return b.exactMatchCount - a.exactMatchCount;
         }
-        if (b.similarity !== a.similarity) {
-          return b.similarity - a.similarity;
+        if (b.coverage !== a.coverage) {
+          return b.coverage - a.coverage;
         }
-        if (b.maxCpc !== a.maxCpc) {
-          return b.maxCpc - a.maxCpc;
+        if (b.campaign.maxCpc !== a.campaign.maxCpc) {
+          return b.campaign.maxCpc - a.campaign.maxCpc;
         }
-        return a.id.localeCompare(b.id);
+        return a.campaign.id.localeCompare(b.campaign.id);
       })
       .slice(0, this.lexicalTopM)
-      .map(({ exactMatchCount: _exactMatchCount, ...candidate }) => candidate);
+      .map(({ campaign, coverage, exactMatchCount }) => ({
+        ...this.buildCandidate(campaign, coverage),
+        score: exactMatchCount * 100 + coverage * 10,
+      }));
 
     this.metricsService.incRtbEmbeddingSource('fallback');
     this.metricsService.recordRtbLexicalFallback(reason, candidates.length);
@@ -411,16 +440,41 @@ export class TransformerMatcher extends Matcher {
     return parsed;
   }
 
+  /**
+   * 데이터 소스와 관계없이 matcher에는 동일한 RTB 조회 모델만 전달한다.
+   */
+  private async findServingCampaignsByIds(
+    ids: string[]
+  ): Promise<ServingCampaign[]> {
+    if (this.localSnapshotEnabled) {
+      return this.campaignServingSnapshot.findCampaignsByIds(ids);
+    }
+
+    const cachedCampaigns =
+      await this.campaignCacheRepo.findCampaignCachesByIds(ids);
+    return cachedCampaigns.map(toServingCampaign);
+  }
+
+  /**
+   * 설정된 dense retrieval 모드에 따라 ANN 후보 검색을 수행한다.
+   * semantic_document는 문서 유사도를 최종 매칭 신호로 사용하고,
+   * legacy_tag는 ANN을 후보 축소에만 사용한 뒤 태그 기반으로 다시 채점한다.
+   */
   private async findCandidatesByAnn(
     context: DecisionContext,
     requestEmbedding: number[],
     requestNorm: string,
     requestTokens: Set<string>
   ): Promise<ScoredCandidate[]> {
+    // [분기 A: semantic document ANN]
+    // 문서 ANN 검색부터 hydrate·자격 검증·점수 생성까지 전용 흐름에 위임한다.
     if (this.denseRetrievalMode === 'semantic_document') {
       return this.findCandidatesByDocumentAnn(context, requestEmbedding);
     }
 
+    // [1. legacy tag ANN 검색]
+    // 요청 벡터와 가까운 캠페인 태그를 top-L까지 조회한다.
+    // 이 유사도는 최종 점수가 아니라 재채점할 캠페인을 좁히는 retrieval 신호다.
     const annSearchStartedAt = process.hrtime.bigint();
     const tagHits = await this.campaignCacheRepo.searchCampaignTagVectors({
       queryEmbedding: requestEmbedding,
@@ -428,6 +482,7 @@ export class TransformerMatcher extends Matcher {
       isHighIntent: context.isHighIntent,
       nowTs: Date.now(),
     });
+
     this.metricsService.recordRtbStage(
       'match_ann_search',
       'ok',
@@ -435,6 +490,8 @@ export class TransformerMatcher extends Matcher {
     );
     this.metricsService.observeRtbAnnTagHitCount(tagHits.length);
 
+    // [종료 분기 B: ANN 태그 hit 없음]
+    // legacy tag 인덱스에서 후보를 찾지 못하면 재채점 없이 빈 결과를 반환한다.
     if (tagHits.length === 0) {
       this.metricsService.incRtbFallback('matcher_empty');
       if (this.logsEnabled) {
@@ -443,6 +500,8 @@ export class TransformerMatcher extends Matcher {
       return [];
     }
 
+    // [2. 태그 hit를 캠페인 단위로 집계]
+    // 캠페인별 상위 태그 유사도와 coverage로 retrieval 순위를 만든 뒤 top-M ID만 유지한다.
     const groupHitsStartedAt = process.hrtime.bigint();
     const retrievedCampaignIds = this.aggregateAnnTagHits(tagHits)
       .slice(0, this.annTopM)
@@ -456,19 +515,17 @@ export class TransformerMatcher extends Matcher {
       retrievedCampaignIds.length
     );
 
+    // [종료 분기 C: 캠페인 ID 집계 결과 없음]
     if (retrievedCampaignIds.length === 0) {
       this.metricsService.incRtbFallback('matcher_empty');
       return [];
     }
 
+    // [3. 검색 후보 hydrate]
+    // ANN hit에 없는 CPC·광고 소재·집행 조건을 snapshot 또는 Redis에서 조회한다.
     const loadRetrievedStartedAt = process.hrtime.bigint();
-    const retrievedCampaigns = this.localSnapshotEnabled
-      ? await this.campaignServingSnapshot.findCampaignsByIds(
-          retrievedCampaignIds
-        )
-      : await this.campaignCacheRepo.findCampaignCachesByIds(
-          retrievedCampaignIds
-        );
+    const retrievedCampaigns =
+      await this.findServingCampaignsByIds(retrievedCampaignIds);
     this.metricsService.recordRtbStage(
       this.localSnapshotEnabled
         ? 'match_campaign_hydrate_snapshot'
@@ -477,16 +534,21 @@ export class TransformerMatcher extends Matcher {
       this.elapsedMs(loadRetrievedStartedAt)
     );
 
+    // [4. 집행 자격 재검증]
+    // ANN 조회 이후 상태 변경 가능성을 고려해 ACTIVE/기간/삭제/high-intent/태그 임베딩 조건을 확인한다.
     const eligibleCampaigns = this.filterEligibleCampaigns(
       retrievedCampaigns,
       context.isHighIntent
     );
 
+    // [종료 분기 D: 집행 가능한 검색 후보 없음]
     if (eligibleCampaigns.length === 0) {
       this.metricsService.incRtbFallback('matcher_empty');
       return [];
     }
 
+    // [5. legacy tag 최종 재채점]
+    // ANN retrieval 순위를 그대로 쓰지 않고 태그별 top-k·coverage·exact match로 유사도를 다시 계산한다.
     return this.scoreEligibleCampaigns(
       eligibleCampaigns,
       requestEmbedding,
@@ -496,10 +558,24 @@ export class TransformerMatcher extends Matcher {
     );
   }
 
+  /**
+   * 문서 ANN Top-L 검색
+   * → 유사도 임계값 적용
+   * → Top-M 후보 축소
+   * → 캠페인 데이터 hydrate
+   * → 집행 조건 재검증
+   * → 문서 유사도와 CPC로 점수 생성
+   * → 필요하면 Hybrid 결과 결합
+   * → 최종 후보 반환
+   *
+   * 문서 ANN 결과 자체가 없으면 lexical fallback으로 전환한다.
+   */
   private async findCandidatesByDocumentAnn(
     context: DecisionContext,
     requestEmbedding: number[]
   ): Promise<ScoredCandidate[]> {
+    // [1. Dense retrieval]
+    // 요청 문서 임베딩과 가까운 캠페인 문서를 ANN 인덱스에서 넓게(top-L) 조회한다.
     const annSearchStartedAt = process.hrtime.bigint();
     const documentHits =
       await this.campaignCacheRepo.searchCampaignDocumentVectors({
@@ -514,6 +590,8 @@ export class TransformerMatcher extends Matcher {
       this.elapsedMs(annSearchStartedAt)
     );
 
+    // [종료 분기 A: semantic 인덱스 미준비]
+    // 검색 결과 자체가 없으면 인덱스를 사용할 수 없는 상태로 보고 lexical 경로로 전환한다.
     if (documentHits.length === 0) {
       return this.findCandidatesByLexicalFallback(
         context,
@@ -521,22 +599,28 @@ export class TransformerMatcher extends Matcher {
       );
     }
 
+    // [2. Dense 후보 축소]
+    // 최소 유사도를 통과한 결과만 남긴 뒤 실제로 hydrate할 후보 수를 top-M으로 제한한다.
     const retainedHits = documentHits
       .filter((hit) => hit.similarity >= this.documentSimilarityThreshold)
       .slice(0, this.annTopM);
     this.metricsService.observeRtbAnnRetrievedCampaignCount(
       retainedHits.length
     );
+
+    // [종료 분기 B: 유사도 통과 후보 없음]
+    // 인덱스는 정상이지만 기준을 만족하는 캠페인이 없으므로 fallback 없이 빈 후보를 반환한다.
     if (retainedHits.length === 0) {
       this.metricsService.incRtbFallback('matcher_empty');
       return [];
     }
 
+    // [3. 캠페인 hydrate]
+    // ANN hit에는 입찰에 필요한 전체 정보가 없으므로 ID로 serving campaign을 조회한다.
+    // 설정에 따라 프로세스 로컬 snapshot 또는 Redis JSON을 데이터 소스로 사용한다.
     const loadStartedAt = process.hrtime.bigint();
     const ids = retainedHits.map((hit) => hit.campaignId);
-    const retrievedCampaigns = this.localSnapshotEnabled
-      ? await this.campaignServingSnapshot.findCampaignsByIds(ids)
-      : await this.campaignCacheRepo.findCampaignCachesByIds(ids);
+    const retrievedCampaigns = await this.findServingCampaignsByIds(ids);
     this.metricsService.recordRtbStage(
       this.localSnapshotEnabled
         ? 'match_campaign_hydrate_snapshot'
@@ -545,6 +629,9 @@ export class TransformerMatcher extends Matcher {
       this.elapsedMs(loadStartedAt)
     );
 
+    // [4. 집행 자격 재검증]
+    // hydrate 사이의 상태 변경 가능성을 고려해 ACTIVE/기간/삭제/high-intent 조건을 다시 확인한다.
+    // 문서 ANN 경로는 태그 임베딩으로 재채점하지 않으므로 embeddingTags 존재 여부는 요구하지 않는다.
     const eligibleById = new Map(
       this.filterEligibleCampaigns(
         retrievedCampaigns,
@@ -552,6 +639,10 @@ export class TransformerMatcher extends Matcher {
         false
       ).map((campaign) => [campaign.id, campaign])
     );
+
+    // [5. 최종 후보 점수 생성]
+    // 태그 기반 scoreCampaignByTags()를 거치지 않고 ANN이 반환한 문서 유사도를 그대로 사용한다.
+    // buildCandidate()에서 CPC 30%와 문서 유사도 70%를 합산한다.
     const scoreStartedAt = process.hrtime.bigint();
     const candidates = retainedHits.flatMap((hit) => {
       const campaign = eligibleById.get(hit.campaignId);
@@ -564,10 +655,14 @@ export class TransformerMatcher extends Matcher {
     );
     this.metricsService.observeRtbEligibleCampaignCount(eligibleById.size);
 
+    // [종료 분기 C: hydrate/자격 검증 후 후보 없음]
     if (candidates.length === 0) {
       this.metricsService.incRtbFallback('matcher_empty');
       return [];
     }
+
+    // [6. 결과 반환 방식 분기]
+    // hybrid 모드는 dense 후보에 sparse 검색 결과를 결합하고, 결합 결과가 비면 dense 결과를 유지한다.
     if (this.retrievalMode === 'hybrid') {
       const hybrid = await this.buildHybridCandidates(
         context,
@@ -577,6 +672,8 @@ export class TransformerMatcher extends Matcher {
       );
       return hybrid.length > 0 ? hybrid : candidates;
     }
+
+    // dense_only 모드는 문서 ANN 후보를 그대로 반환한다.
     return candidates;
   }
 
@@ -604,9 +701,7 @@ export class TransformerMatcher extends Matcher {
       .filter((hit) => hit.similarity >= this.documentSimilarityThreshold)
       .slice(0, this.annTopM);
     const ids = retainedHits.map((hit) => hit.campaignId);
-    const retrievedCampaigns = this.localSnapshotEnabled
-      ? await this.campaignServingSnapshot.findCampaignsByIds(ids)
-      : await this.campaignCacheRepo.findCampaignCachesByIds(ids);
+    const retrievedCampaigns = await this.findServingCampaignsByIds(ids);
     const eligibleById = new Map(
       this.filterEligibleCampaigns(
         retrievedCampaigns,
@@ -699,9 +794,7 @@ export class TransformerMatcher extends Matcher {
     const rerankPool = [...denseCandidates, ...sparseSupplements];
     const rerankStartedAt = process.hrtime.bigint();
     const rerankIds = rerankPool.map((item) => item.campaignId);
-    const hydratedPool = this.localSnapshotEnabled
-      ? await this.campaignServingSnapshot.findCampaignsByIds(rerankIds)
-      : await this.campaignCacheRepo.findCampaignCachesByIds(rerankIds);
+    const hydratedPool = await this.findServingCampaignsByIds(rerankIds);
     const eligibleById = new Map(
       this.filterEligibleCampaigns(
         hydratedPool,
@@ -799,9 +892,7 @@ export class TransformerMatcher extends Matcher {
     }
 
     const taggedCampaigns =
-      await this.campaignServingSnapshot.findCampaignsByTags([
-        ...requestTags,
-      ]);
+      await this.campaignServingSnapshot.findCampaignsByTags([...requestTags]);
     const eligibleCampaigns = this.filterEligibleCampaigns(
       taggedCampaigns,
       context.isHighIntent,
@@ -899,8 +990,17 @@ export class TransformerMatcher extends Matcher {
     return this.clamp01(weighted / weightSum);
   }
 
+  /**
+   * 캠페인과 요청 임베딩, norm, 토큰을 비교해서 점수 산출
+   * @param eligibleCampaigns 캠페인 후보군
+   * @param requestEmbedding 요청 벡터 임베딩
+   * @param requestNorm
+   * @param requestTokens
+   * @param totalCampaignCount
+   * @returns
+   */
   private async scoreEligibleCampaigns(
-    eligibleCampaigns: MatchableCampaign[],
+    eligibleCampaigns: ServingCampaign[],
     requestEmbedding: number[],
     requestNorm: string,
     requestTokens: Set<string>,
@@ -947,17 +1047,14 @@ export class TransformerMatcher extends Matcher {
   }
 
   private buildCandidate(
-    campaign: MatchableCampaign,
+    campaign: ServingCampaign,
     similarity: number
   ): ScoredCandidate {
     const cpcScore = campaign.maxCpc * this.CPC_WEIGHT;
     const similarityScore = similarity * 100 * this.SIMILARITY_WEIGHT;
 
     return {
-      ...campaign,
-      embeddingTags: undefined,
-      embeddingDocument: undefined,
-      similarity,
+      ...createCandidate(campaign, similarity),
       score: cpcScore + similarityScore,
     };
   }
@@ -973,10 +1070,10 @@ export class TransformerMatcher extends Matcher {
 
   // 비딩 자격 필터링: ACTIVE + 날짜 범위 + deletedAt + embeddingTags 존재
   private filterEligibleCampaigns(
-    campaigns: MatchableCampaign[],
+    campaigns: ServingCampaign[],
     isHighIntent: boolean,
     requireEmbeddings = true
-  ): MatchableCampaign[] {
+  ): ServingCampaign[] {
     const now = new Date();
 
     return campaigns.filter((campaign) => {
@@ -1077,7 +1174,7 @@ export class TransformerMatcher extends Matcher {
     requestEmbedding: number[],
     requestNorm: string,
     requestTokens: Set<string>,
-    campaign: MatchableCampaign
+    campaign: ServingCampaign
   ): Promise<number> {
     // CachedCampaign의 tags는 string[] 형태
     const tagNames = (campaign.tags ?? []).filter(Boolean);

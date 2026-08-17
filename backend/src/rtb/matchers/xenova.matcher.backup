@@ -42,7 +42,7 @@ export class TransformerMatcher extends Matcher {
   }
 
   //  ML 모델(Transformer)을 사용하여 문맥(Tags)과 유사도가 높은 캠페인 후보를 찾습니다.
-  async findCandidatesByTags(context: DecisionContext): Promise<Candidate[]> {
+  async matchCandidates(context: DecisionContext): Promise<Candidate[]> {
     // ML 모델 준비 안 됐으면 빈 배열 반환 (Scorer에서 태그 매칭으로 커버 예정)
     if (!this.mlEngine.isReady()) {
       this.logger.warn('ML 모델이 준비가 안 되었습니다.');

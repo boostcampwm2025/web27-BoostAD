@@ -307,12 +307,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     }
   }
 
-  async incrementSpent(
-    campaignId: string,
-    cpc: number,
-    dailyBudget: number,
-    totalBudget: number | null
-  ): Promise<boolean> {
+  async incrementSpent(campaignId: string, cpc: number): Promise<boolean> {
     const key = this.getCampaignCacheKey(campaignId);
 
     try {
@@ -321,9 +316,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
         REDIS_INCREMENT_SPENT_SCRIPT,
         1,
         key,
-        cpc.toString(),
-        dailyBudget.toString(),
-        totalBudget !== null ? totalBudget.toString() : 'null'
+        cpc.toString()
       )) as number;
 
       if (result === 1) {
@@ -343,6 +336,10 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
         if (this.logsEnabled) {
           this.logger.debug(`캠페인 ${campaignId} 총 예산 초과로 증가 실패`);
         }
+      } else if (result === -2) {
+        if (this.logsEnabled) {
+          this.logger.debug(`캠페인 ${campaignId} 비활성 상태로 증가 실패`);
+        }
       } else {
         if (this.logsEnabled) {
           this.logger.warn(
@@ -358,6 +355,10 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     }
   }
 
+  /**
+   * 순위가 확정된 후보를 앞에서부터 검사해 예산 확보가 가능한 첫 캠페인 하나를 예약한다.
+   * Lua 스크립트에서 예산 검증과 spent 증가를 원자적으로 처리하며, 예약할 후보가 없으면 null을 반환한다.
+   */
   async reserveFirstAvailable(
     candidates: BudgetReservationCandidate[]
   ): Promise<BudgetReservationResult | null> {

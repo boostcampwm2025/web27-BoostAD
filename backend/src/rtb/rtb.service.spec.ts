@@ -22,10 +22,7 @@ type ReserveFirstAvailableMock = jest.Mock<
   [BudgetReservationCandidate[]]
 >;
 
-type IncrementSpentMock = jest.Mock<
-  Promise<boolean>,
-  [string, number, number, number | null]
->;
+type IncrementSpentMock = jest.Mock<Promise<boolean>, [string, number]>;
 
 type RepositoryMocks = {
   incrementSpent: IncrementSpentMock;
@@ -78,16 +75,10 @@ describe('RTBService winner-only reservation', () => {
     image: null,
     url: 'https://example.com/ad',
     maxCpc: 10,
-    dailyBudget: 100,
-    totalBudget: 1000,
-    dailySpent: 0,
-    totalSpent: 0,
-    lastResetDate: new Date().toISOString(),
     isHighIntent: false,
     status: 'ACTIVE',
     startDate: new Date(Date.now() - 1000).toISOString(),
     endDate: new Date(Date.now() + 60_000).toISOString(),
-    createdAt: new Date().toISOString(),
     deletedAt: null,
     tags: ['typescript'],
     similarity: 0.9,
@@ -104,10 +95,10 @@ describe('RTBService winner-only reservation', () => {
     } = {}
   ): Harness => {
     const matcher = {
-      findCandidatesByTags: jest.fn().mockResolvedValue(candidates),
+      matchCandidates: jest.fn().mockResolvedValue(candidates),
     } as unknown as Matcher;
     const selector = {
-      selectWinner: jest.fn<Promise<SelectionResult>, [ScoredCandidate[]]>(
+      rankCandidates: jest.fn<Promise<SelectionResult>, [ScoredCandidate[]]>(
         (input) => {
           const ranked = [...input].sort((a, b) => {
             if (b.score !== a.score) return b.score - a.score;
@@ -117,16 +108,14 @@ describe('RTBService winner-only reservation', () => {
           return Promise.resolve({ winner: ranked[0], candidates: ranked });
         }
       ),
-    } as unknown as CampaignSelector & { selectWinner: jest.Mock };
+    } as unknown as CampaignSelector & { rankCandidates: jest.Mock };
     const cacheRepository = {
       setAuctionData: jest.fn().mockResolvedValue(undefined),
     } as unknown as CacheRepository & { setAuctionData: jest.Mock };
     const repositoryMocks: RepositoryMocks = {
       incrementSpent:
         options.incrementSpent ??
-        jest
-          .fn<Promise<boolean>, [string, number, number, number | null]>()
-          .mockResolvedValue(true),
+        jest.fn<Promise<boolean>, [string, number]>().mockResolvedValue(true),
       reserveFirstAvailable:
         options.reserveFirstAvailable ??
         jest
@@ -315,10 +304,9 @@ describe('RTBService winner-only reservation', () => {
   });
 
   it('does not overspend under concurrent winner-only requests', async () => {
+    const dailyBudget = 100;
     const candidate = buildCandidate('limited', 100, {
       maxCpc: 10,
-      dailyBudget: 100,
-      totalBudget: 100,
     });
     let spent = 0;
     const reserveFirstAvailable = jest
@@ -327,7 +315,7 @@ describe('RTBService winner-only reservation', () => {
         [BudgetReservationCandidate[]]
       >()
       .mockImplementation(() => {
-        if (spent + candidate.maxCpc > candidate.dailyBudget) {
+        if (spent + candidate.maxCpc > dailyBudget) {
           return Promise.resolve(null);
         }
         spent += candidate.maxCpc;
@@ -348,7 +336,7 @@ describe('RTBService winner-only reservation', () => {
 
     expect(successes).toHaveLength(10);
     expect(spent).toBe(100);
-    expect(spent).toBeLessThanOrEqual(candidate.dailyBudget);
+    expect(spent).toBeLessThanOrEqual(dailyBudget);
     expect(harness.bidlogAdd).toHaveBeenCalledTimes(10);
     expect(harness.repositoryMocks.decrementSpent).not.toHaveBeenCalled();
   });
@@ -362,6 +350,14 @@ describe('RTBService winner-only reservation', () => {
 
     expect(result.status).toBe('success');
     expect(harness.repositoryMocks.incrementSpent).toHaveBeenCalledTimes(2);
+    expect(harness.repositoryMocks.incrementSpent).toHaveBeenCalledWith(
+      high.id,
+      high.maxCpc
+    );
+    expect(harness.repositoryMocks.incrementSpent).toHaveBeenCalledWith(
+      low.id,
+      low.maxCpc
+    );
     expect(harness.repositoryMocks.decrementSpent).toHaveBeenCalledWith(
       low.id,
       low.maxCpc

@@ -2,9 +2,10 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import type { AppIORedisClient } from 'src/redis/redis.type';
 import { RedisCampaignCacheRepository } from './redis-campaign.cache.repository';
+import { REDIS_INCREMENT_SPENT_SCRIPT } from '../scripts/lua-script';
 
 describe('RedisCampaignCacheRepository winner-only reservation', () => {
-  const buildRepository = (evalResult: [number, number]) => {
+  const buildRepository = (evalResult: unknown) => {
     const redis = {
       eval: jest.fn().mockResolvedValue(evalResult),
     } as unknown as AppIORedisClient & { eval: jest.Mock };
@@ -50,6 +51,30 @@ describe('RedisCampaignCacheRepository winner-only reservation', () => {
         { campaignId: 'second', cpc: 20 },
       ])
     ).resolves.toBeNull();
+  });
+
+  it('passes only campaign key and CPC to the legacy reservation Lua', async () => {
+    const { repository, redis } = buildRepository(1);
+
+    await expect(repository.incrementSpent('campaign-1', 15)).resolves.toBe(
+      true
+    );
+    expect(redis.eval).toHaveBeenCalledWith(
+      expect.any(String),
+      1,
+      'campaign:campaign-1',
+      '15'
+    );
+    expect(REDIS_INCREMENT_SPENT_SCRIPT).not.toContain('ARGV[2]');
+    for (const path of [
+      '$.status',
+      '$.dailyBudget',
+      '$.totalBudget',
+      '$.dailySpent',
+      '$.totalSpent',
+    ]) {
+      expect(REDIS_INCREMENT_SPENT_SCRIPT).toContain(path);
+    }
   });
 
   it('rejects campaign vectors from a different model space', async () => {

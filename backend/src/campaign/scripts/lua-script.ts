@@ -1,49 +1,53 @@
 // Lua Script: 원자적 예산 검증 + Spent 증가 (by Claude)
 // KEYS[1] = campaign:{id}
 // ARGV[1] = cpc
-// ARGV[2] = dailyBudget
-// ARGV[3] = totalBudget (null이면 "null" 문자열)
 //
 // 반환값:
 // 1 = 성공 (Spent 증가됨)
 // 0 = 일일 예산 초과
 // -1 = 총 예산 초과
+// -2 = ACTIVE 상태가 아님
 // -99 = 캠페인 없음
 export const REDIS_INCREMENT_SPENT_SCRIPT = `
     local campaignKey = KEYS[1]
     local cpc = tonumber(ARGV[1])
-    local dailyBudget = tonumber(ARGV[2])
-    local totalBudgetStr = ARGV[3]
-    
-    -- 현재 spent 값 조회 (JSON 경로에서)
+
+    -- 예약 시점의 최신 상태, 예산, spent를 Redis에서 조회
+    local statusRaw = redis.call('JSON.GET', campaignKey, '$.status')
+    local dailyBudgetRaw = redis.call('JSON.GET', campaignKey, '$.dailyBudget')
+    local totalBudgetRaw = redis.call('JSON.GET', campaignKey, '$.totalBudget')
     local dailySpentRaw = redis.call('JSON.GET', campaignKey, '$.dailySpent')
     local totalSpentRaw = redis.call('JSON.GET', campaignKey, '$.totalSpent')
-    
-    if not dailySpentRaw or not totalSpentRaw then
+
+    if not statusRaw or not dailyBudgetRaw or not totalBudgetRaw
+      or not dailySpentRaw or not totalSpentRaw then
       return -99  -- 캠페인 없음
     end
-    
+
+    if not string.find(statusRaw, 'ACTIVE', 1, true) then
+      return -2
+    end
+
     -- JSON 배열 형태로 반환되므로 파싱 필요 (예: "[50000]")
-    local dailySpent = tonumber(string.match(dailySpentRaw, '%[(%d+)%]')) or 0
-    local totalSpent = tonumber(string.match(totalSpentRaw, '%[(%d+)%]')) or 0
-    
+    local dailyBudget = tonumber(string.match(dailyBudgetRaw, '%[([%d%.]+)%]'))
+    local totalBudget = tonumber(string.match(totalBudgetRaw, '%[([%d%.]+)%]'))
+    local dailySpent = tonumber(string.match(dailySpentRaw, '%[([%d%.]+)%]')) or 0
+    local totalSpent = tonumber(string.match(totalSpentRaw, '%[([%d%.]+)%]')) or 0
+
     -- 일일 예산 검증
-    if dailySpent + cpc > dailyBudget then
+    if not dailyBudget or dailySpent + cpc > dailyBudget then
       return 0  -- 일일 예산 초과
     end
-    
-    -- 총 예산 검증 (totalBudget이 "null"이 아닌 경우만)
-    if totalBudgetStr ~= "null" then
-      local totalBudget = tonumber(totalBudgetStr)
-      if totalSpent + cpc > totalBudget then
-        return -1  -- 총 예산 초과
-      end
+
+    -- totalBudget이 null이면 파싱 결과가 nil이므로 총액 제한을 적용하지 않음
+    if totalBudget and totalSpent + cpc > totalBudget then
+      return -1  -- 총 예산 초과
     end
-    
+
     -- 원자적으로 Spent 증가
     redis.call('JSON.NUMINCRBY', campaignKey, '$.dailySpent', cpc)
     redis.call('JSON.NUMINCRBY', campaignKey, '$.totalSpent', cpc)
-    
+
     return 1  -- 성공
   `;
 
