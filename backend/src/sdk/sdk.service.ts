@@ -151,23 +151,7 @@ export class SdkService {
     const isDup = await this.cacheRepository.setClickIdempotencyKey(viewId);
 
     if (isDup) {
-      this.logger.debug(`[SDK ClickLog] 중복 클릭: viewId=${viewId}`);
-
-      // 중복 클릭 시 Spent 롤백
-      const rollbackInfo = await this.cacheRepository.getRollbackInfo(viewId);
-      if (rollbackInfo) {
-        const { campaignId, cost } = rollbackInfo;
-        await this.campaignCacheRepository.decrementSpent(campaignId, cost);
-
-        // Rollback 정보 + 백업 삭제
-        await this.cacheRepository.deleteRollbackInfo(viewId);
-        await this.cacheRepository.deleteRollbackBackup(viewId);
-
-        this.logger.log(
-          `[SDK ClickLog] 중복 클릭 롤백 완료: viewId=${viewId}, campaign=${campaignId}, cost=-${cost}`
-        );
-      }
-
+      this.logger.debug(`[SDK ClickLog] 중복 클릭 무시: viewId=${viewId}`);
       return null;
     }
 
