@@ -428,6 +428,11 @@ export class QualityBenchmarkService {
       totalBudget: 2_000_000_000,
       dailySpent: 0,
       totalSpent: 0,
+      dailyReserved: 0,
+      totalReserved: 0,
+      dailyReservedDate: new Date(now.getTime() + 9 * 60 * 60 * 1000)
+        .toISOString()
+        .slice(0, 10),
       lastResetDate: now.toISOString(),
       isHighIntent: false,
       status: 'ACTIVE',

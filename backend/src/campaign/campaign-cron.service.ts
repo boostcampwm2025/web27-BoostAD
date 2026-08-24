@@ -158,11 +158,10 @@ export class CampaignCronService {
 
           // Redis 업데이트
           if (cached) {
-            cached.dailySpent = actualDailySpent;
-            cached.totalSpent = actualTotalSpent;
-            await this.campaignCacheRepository.saveCampaignCacheById(
+            await this.campaignCacheRepository.replaceSpentCacheById(
               campaignId,
-              cached
+              actualDailySpent,
+              actualTotalSpent
             );
           }
 
@@ -452,11 +451,10 @@ export class CampaignCronService {
               actualTotalSpent
             );
             if (cached) {
-              cached.dailySpent = actualDailySpent;
-              cached.totalSpent = actualTotalSpent;
-              await this.campaignCacheRepository.saveCampaignCacheById(
+              await this.campaignCacheRepository.replaceSpentCacheById(
                 campaignId,
-                cached
+                actualDailySpent,
+                actualTotalSpent
               );
               reconciledCount++;
             }

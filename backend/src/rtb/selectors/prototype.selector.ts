@@ -11,7 +11,10 @@ export class PrototypeCampaignSelector implements CampaignSelector {
   private readonly logger = createRtbPathLogger(PrototypeCampaignSelector.name);
   private readonly logsEnabled = rtbPathLogsEnabled();
 
-  async selectWinner(candidates: ScoredCandidate[]): Promise<SelectionResult> {
+  // 현재 구현은 동기 연산이지만, selector 인터페이스와 호출부의 Promise 계약을 맞추기 위해 async를 유지한다.
+  async rankCandidates(
+    candidates: ScoredCandidate[]
+  ): Promise<SelectionResult> {
     // 점수 내림차순 정렬 (동점자 비교)
     const sorted = [...candidates].sort((a, b) => {
       // 1차: 점수 비교

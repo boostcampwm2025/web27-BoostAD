@@ -10,6 +10,8 @@ import { randomUUID } from 'crypto';
 import { CacheRepository } from '../cache/repository/cache.repository.interface';
 import { BidStatus } from '../bid-log/bid-log.types';
 import { CampaignCacheRepository } from '../campaign/repository/campaign.cache.repository.interface';
+import { toServingCampaign } from '../campaign/serving-campaign';
+import { createCandidate } from './candidate.factory';
 import { MetricsService } from '../metrics/metrics.service';
 import {
   createRtbPathLogger,
@@ -19,6 +21,8 @@ import { InjectQueue } from '@nestjs/bullmq';
 import { Queue } from 'bullmq';
 import { BidLogJobData } from '../queue/types/queue.type';
 import { ConfigService } from '@nestjs/config';
+import { AUCTION_RESERVATION_TTL_MS } from '../campaign/constants/auction-reservation.constants';
+import type { ActiveAuctionReservation } from '../campaign/types/campaign.types';
 
 type BudgetMode = 'legacy_topk' | 'winner_only';
 
@@ -30,6 +34,7 @@ export class RTBService {
     'c1dda7a5-da58-416b-b8fa-20ba8f5535f9';
   private readonly TOP_K = 10;
   private readonly budgetMode: BudgetMode;
+  private readonly auctionReservationTtlMs: number;
 
   constructor(
     private readonly matcher: Matcher,
@@ -44,26 +49,39 @@ export class RTBService {
     this.budgetMode = this.resolveBudgetMode(
       this.configService.get<string>('RTB_BUDGET_MODE', 'legacy_topk')
     );
+    this.auctionReservationTtlMs = this.getPositiveIntConfig(
+      'RTB_AUCTION_RESERVATION_TTL_MS',
+      AUCTION_RESERVATION_TTL_MS
+    );
   }
 
+  /**
+   * RTB 경매의 전체 오케스트레이션 진입점.
+   * 후보 매칭 → fallback 보완 → 예산 예약 → 경매 캐시/입찰 로그 저장 → 응답 생성을 순서대로 수행한다.
+   */
   async runAuction(context: DecisionContext) {
+    // [0. 요청 결과 추적 초기화]
+    // finally에서 경로별 지연 시간과 success/error/fallback 결과를 공통 기록한다.
     const totalStartedAt = process.hrtime.bigint();
     let requestResult: 'success' | 'error' | 'fallback' = 'success';
     let totalOutcome: 'ok' | 'error' | 'fallback' = 'ok';
     let fallbackUsed = false;
 
     try {
+      // [1. 경매 식별자와 검증된 요청 컨텍스트 준비]
+      // blogId는 진입 전 Guard에서 검증됐으므로 여기서는 중복 조회하지 않는다.
       const auctionId = randomUUID();
-
-      // 0. blogId는 Guard에서 이미 검증됨 (중복 조회 제거)
       const blogId = context.blogId;
 
-      // 1. 후보 불러오기 및 필터링 + 점수 계산
+      // [2. 캠페인 후보 매칭]
+      // matcher가 ANN/lexical 설정에 따라 후보를 조회하고 집행 조건 필터링과 점수 계산까지 수행한다.
+      // 이 단계에서는 아직 캠페인 예산을 예약하지 않는다.
       let candidates: ScoredCandidate[] = await this.measureStage('match', () =>
-        this.matcher.findCandidatesByTags(context)
+        this.matcher.matchCandidates(context)
       );
 
-      // 후보가 없으면 fallback 캠페인 조회 (캐시에서)
+      // [분기 A: 매칭 후보 없음 → 고정 fallback 캠페인 보완]
+      // 예약 실패가 아니라 matcher 결과가 비었을 때만 fallback 캠페인을 후보로 주입한다.
       if (candidates.length === 0) {
         fallbackUsed = true;
         this.metricsService.incRtbFallback('no_candidates');
@@ -89,11 +107,16 @@ export class RTBService {
               throw new Error('Fallback 캠페인을 찾을 수 없습니다');
             }
 
+            const candidate = createCandidate(
+              toServingCampaign(fallbackCampaign),
+              0
+            );
+
+            // fallback은 의미 유사도 없이 CPC 가중치만 반영하고 이후 동일한 예산 예약 경로를 탄다.
             return [
               {
-                similarity: 0,
+                ...candidate,
                 score: fallbackCampaign.maxCpc * 0.3,
-                ...fallbackCampaign,
               },
             ];
           },
@@ -101,25 +124,32 @@ export class RTBService {
         );
       }
 
+      // [3. 예산 예약 방식 선택]
+      // fallback을 포함한 최종 후보 수를 기록한 뒤 설정된 budget mode로 winner를 확정한다.
       this.metricsService.observeRtbMatchedBeforeReserveCount(
         candidates.length
       );
 
       const result =
         this.budgetMode === 'winner_only'
-          ? await this.runWinnerOnlyReservation(candidates)
+          ? await this.runWinnerOnlyReservation(auctionId, blogId, candidates)
           : await this.runLegacyTopKReservation(auctionId, candidates);
 
-      // 6. AuctionStore에 경매 데이터 저장 (ViewLog에서 조회용)
-      await this.measureStage('cache_auction', () =>
-        this.measureDependency('redis', 'set_auction_data', () =>
-          this.cacheRepository.setAuctionData(auctionId, {
-            blogId: blogId,
-            cost: result.winner.maxCpc,
-          })
-        )
-      );
+      // [4. legacy 경매 결과 캐시 저장]
+      // winner_only는 예약 Lua가 같은 auction 키에 versioned 예약 정보를 이미 저장한다.
+      if (this.budgetMode === 'legacy_topk') {
+        await this.measureStage('cache_auction', () =>
+          this.measureDependency('redis', 'set_auction_data', () =>
+            this.cacheRepository.setAuctionData(auctionId, {
+              blogId: blogId,
+              cost: result.winner.maxCpc,
+            })
+          )
+        );
+      }
 
+      // [5. 입찰 로그 작업 생성]
+      // 예산 모드가 반환한 후보 목록을 winner/loser 상태로 변환해 비동기 저장 큐에 넣는다.
       const bidLogJob: BidLogJobData = {
         auctionId,
         blogId: blogId,
@@ -143,9 +173,12 @@ export class RTBService {
       this.metricsService.observeRtbBidLogCount(bidLogJob.items.length);
       await this.bidlogQueue.add('save-bidlog', bidLogJob);
 
+      // [6. 성공 결과 분류]
+      // fallback 캠페인이 낙찰돼도 API 응답은 success이며 메트릭 결과만 fallback으로 구분한다.
       requestResult = fallbackUsed ? 'fallback' : 'success';
       totalOutcome = fallbackUsed ? 'fallback' : 'ok';
 
+      // [정상 종료: 낙찰 캠페인과 경매 후보 반환]
       return {
         status: 'success',
         message: '광고 선정 완료',
@@ -157,6 +190,8 @@ export class RTBService {
         timestamp: new Date().toISOString(),
       };
     } catch (error) {
+      // [오류 종료]
+      // fallback 조회 실패, 예산 확보 실패, Redis/Queue 오류 등 경매 중 발생한 예외를 공통 처리한다.
       const errorMessage =
         error instanceof Error ? error.message : String(error);
 
@@ -167,9 +202,8 @@ export class RTBService {
         this.logger.warn(`Auction 실패: ${errorMessage}`);
       }
 
-      // 에러 발생 시(예: 후보 없음) null winner와 빈 리스트를 반환하여 정상 응답 처리
-
-      // message와 error 필드에 대해서는 추후에 통일된 에러 헨들링 전략 사용이 용이할 거 같음
+      // 현재 계약은 예외를 다시 던지지 않고 status:error와 data:null 응답으로 변환한다.
+      // message/errors의 임시 문자열은 추후 공통 에러 처리 정책에서 구체화할 대상이다.
       return {
         status: 'error',
         message: 'error message',
@@ -183,6 +217,8 @@ export class RTBService {
         timestamp: new Date().toISOString(),
       };
     } finally {
+      // [공통 종료 처리]
+      // 정상·fallback·오류 여부와 관계없이 전체 지연 시간과 최종 요청 결과를 기록한다.
       this.metricsService.recordRtbStage(
         'total',
         totalOutcome,
@@ -192,39 +228,65 @@ export class RTBService {
     }
   }
 
+  /**
+   * winner-only 예산 예약 흐름.
+   * 점수순으로 후보를 정렬한 뒤 예산 확보가 가능한 첫 캠페인 하나만 예약한다.
+   */
   private async runWinnerOnlyReservation(
+    auctionId: string,
+    blogId: number,
     candidates: ScoredCandidate[]
   ): Promise<SelectionResult> {
+    // [1. 후보 순위 확정]
+    // score → maxCpc → 완전 동점 시 랜덤 순서로 예산 예약 우선순위를 만든다.
     const ranked = await this.measureStage('select', () =>
-      this.selector.selectWinner(candidates)
-    );
-    const winner = await this.measureStage('reserve', () =>
-      this.reserveFirstRankedCandidate(ranked.candidates)
+      this.selector.rankCandidates(candidates)
     );
 
+    // [2. winner 한 건 예약]
+    // 정렬된 순서대로 확인하며 예산 확보가 가능한 첫 캠페인에서 탐색을 종료한다.
+    const winner = await this.measureStage('reserve', () =>
+      this.reserveFirstRankedCandidate(auctionId, blogId, ranked.candidates)
+    );
+
+    // [종료 분기: 모든 후보의 예산 확보 실패]
     if (!winner) {
       throw new Error('예산 확보 가능한 캠페인이 없습니다');
     }
 
+    // [3. 최종 결과 반환]
+    // winner-only는 패자 예산을 선점하지 않았으므로 롤백 대상이 없다.
     this.metricsService.observeRtbRollbackCandidateCount(0);
     return { winner, candidates: [winner] };
   }
 
+  /**
+   * legacy top-K 예산 예약 흐름.
+   * 점수 상위 window의 캠페인들을 함께 예약하고 winner를 고른 뒤 패자 예약을 롤백한다.
+   */
   private async runLegacyTopKReservation(
     auctionId: string,
     candidates: ScoredCandidate[]
   ): Promise<SelectionResult> {
+    // [1. Top-K window 예약]
+    // 점수순 window 안의 후보를 병렬 예약하고, 한 건 이상 성공한 첫 window만 사용한다.
     const reservedCandidates = await this.measureStage('reserve', () =>
       this.reserveCandidatesByTopKWindow(candidates)
     );
 
+    // [종료 분기: 모든 window의 예산 확보 실패]
     if (reservedCandidates.length === 0) {
       throw new Error('예산 확보 가능한 캠페인이 없습니다');
     }
 
+    // [2. 예약 성공 후보의 winner 확정]
+    // 병렬 예약 완료 순서는 순위를 보장하지 않으므로 성공 후보를 다시 정렬한다.
     const result = await this.measureStage('select', () =>
-      this.selector.selectWinner(reservedCandidates)
+      this.selector.rankCandidates(reservedCandidates)
     );
+
+    // [3. 패자 예약 롤백]
+    // 최종 winner를 제외한 캠페인에 선반영된 spent를 원복한다.
     await this.measureStage('rollback', () =>
       this.rollbackLosersSpent(auctionId, result)
     );
@@ -288,13 +350,11 @@ export class RTBService {
 
     await Promise.allSettled(
       candidates.map(async (candidate) => {
-        const { id, maxCpc, dailyBudget, totalBudget } = candidate;
+        const { id, maxCpc } = candidate;
         const dependencyStartedAt = process.hrtime.bigint();
         const reserved = await this.campaignCacheRepository.incrementSpent(
           id,
-          maxCpc,
-          dailyBudget,
-          totalBudget
+          maxCpc
         );
 
         this.metricsService.recordDependency(
@@ -319,39 +379,68 @@ export class RTBService {
   }
 
   private async reserveFirstRankedCandidate(
+    auctionId: string,
+    blogId: number,
     rankedCandidates: ScoredCandidate[]
   ): Promise<ScoredCandidate | null> {
+    // [1. 탐색량 집계 초기화]
     let attemptedCandidateCount = 0;
     let attemptedWindowCount = 0;
+    const nowMs = Date.now();
+    const budgetDate = this.getKstBudgetDate(nowMs);
+    const expiresAt = Math.min(
+      nowMs + this.auctionReservationTtlMs,
+      this.getNextKstMidnightEpochMs(nowMs)
+    );
 
+    // [2. 순위 후보를 Top-K window 단위로 탐색]
+    // 한 window가 모두 소진됐을 때만 다음 순위 window로 이동한다.
     for (let start = 0; start < rankedCandidates.length; start += this.TOP_K) {
       attemptedWindowCount += 1;
       const window = rankedCandidates.slice(start, start + this.TOP_K);
       const dependencyStartedAt = process.hrtime.bigint();
-      const reserved = await this.campaignCacheRepository.reserveFirstAvailable(
-        window.map((candidate) => ({
+
+      // [2-1. 현재 window 예약]
+      // Redis가 전달된 순서대로 검사하고 예산 확보가 가능한 첫 캠페인 하나만 예약한다.
+      const reserved = await this.campaignCacheRepository.reserveAuction({
+        auctionId,
+        blogId,
+        budgetDate,
+        expiresAt,
+        candidates: window.map((candidate) => ({
           campaignId: candidate.id,
           cpc: candidate.maxCpc,
-        }))
-      );
-      const checkedInWindow = reserved?.attemptedCount ?? window.length;
+        })),
+      });
+      const checkedInWindow = reserved.attemptedCount;
       attemptedCandidateCount += checkedInWindow;
+      const reservationSucceeded =
+        reserved.outcome === 'reserved' || reserved.outcome === 'existing';
 
       this.metricsService.recordDependency(
         'redis',
-        'reserve_first_available',
-        reserved ? 'ok' : 'rejected',
+        'reserve_auction',
+        reservationSucceeded ? 'ok' : 'rejected',
         this.elapsedMs(dependencyStartedAt)
       );
       this.metricsService.incRtbReservationFailure(
         'rejected',
-        reserved ? Math.max(0, checkedInWindow - 1) : checkedInWindow
+        reservationSucceeded
+          ? Math.max(0, checkedInWindow - 1)
+          : checkedInWindow
       );
 
-      if (reserved) {
-        const winner = window.find(
-          (candidate) => candidate.id === reserved.campaignId
+      // [성공 분기: 예약된 ID를 원본 후보 객체로 복원]
+      if (reservationSucceeded) {
+        const reservation = reserved.reservation;
+        if (!this.isActiveReservation(reservation)) {
+          throw new Error('winner-only 예약 상태가 이미 종료되었습니다');
+        }
+        const winner = rankedCandidates.find(
+          (candidate) => candidate.id === reservation.campaignId
         );
+
+        // Redis 결과와 현재 window가 어긋나면 잘못된 winner를 반환하지 않고 중단한다.
         if (!winner) {
           throw new Error(
             'winner-only 예약 결과가 후보 window와 일치하지 않습니다'
@@ -364,8 +453,13 @@ export class RTBService {
         );
         return winner;
       }
+
+      if (reserved.outcome === 'conflict') {
+        throw new Error('auctionId가 기존 legacy 경매 데이터와 충돌했습니다');
+      }
     }
 
+    // [종료 분기: 전체 후보 소진]
     this.recordWinnerOnlyFanout(
       attemptedWindowCount,
       attemptedCandidateCount,
@@ -501,5 +595,41 @@ export class RTBService {
       );
     }
     return 'legacy_topk';
+  }
+
+  private isActiveReservation(
+    reservation: unknown
+  ): reservation is ActiveAuctionReservation {
+    return (
+      typeof reservation === 'object' &&
+      reservation !== null &&
+      'status' in reservation &&
+      reservation.status === 'RESERVED' &&
+      'campaignId' in reservation &&
+      typeof reservation.campaignId === 'string'
+    );
+  }
+
+  private getPositiveIntConfig(name: string, fallback: number): number {
+    const parsed = Number(this.configService.get<string>(name));
+    return Number.isFinite(parsed) && parsed > 0
+      ? Math.floor(parsed)
+      : fallback;
+  }
+
+  private getKstBudgetDate(epochMs: number): string {
+    return new Date(epochMs + 9 * 60 * 60 * 1000).toISOString().slice(0, 10);
+  }
+
+  private getNextKstMidnightEpochMs(epochMs: number): number {
+    const shifted = new Date(epochMs + 9 * 60 * 60 * 1000);
+    return (
+      Date.UTC(
+        shifted.getUTCFullYear(),
+        shifted.getUTCMonth(),
+        shifted.getUTCDate() + 1
+      ) -
+      9 * 60 * 60 * 1000
+    );
   }
 }

@@ -2,7 +2,6 @@ import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { OnEvent } from '@nestjs/event-emitter';
 import { CampaignCacheRepository } from './repository/campaign.cache.repository.interface';
-import type { CachedCampaign } from './types/campaign.types';
 import {
   resolveEmbeddingProfile,
   type EmbeddingProfile,
@@ -13,14 +12,9 @@ import {
   type CampaignCacheRemovedEvent,
   type CampaignCacheUpsertedEvent,
 } from './events/campaign-cache.events';
+import { toServingCampaign, type ServingCampaign } from './serving-campaign';
 
-export type ServingCampaign = Omit<
-  CachedCampaign,
-  'embeddingTags' | 'embeddingDocument'
-> & {
-  embeddingTags?: Record<string, Float32Array>;
-  embeddingDocument?: Float32Array;
-};
+export type { ServingCampaign } from './serving-campaign';
 
 type SnapshotMutation = ServingCampaign | null;
 
@@ -61,8 +55,7 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
       configService.get<string>(
         'RTB_DENSE_RETRIEVAL_MODE',
         'semantic_document'
-      ) ===
-      'semantic_document';
+      ) === 'semantic_document';
     const campaignSource = configService.get<string>('RTB_CAMPAIGN_SOURCE');
     this.enabled = campaignSource
       ? campaignSource === 'local_snapshot'
@@ -94,9 +87,7 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
     if (repairIds.length > 0) {
       const repaired =
         await this.campaignCacheRepository.findCampaignCachesByIds(repairIds);
-      this.upsertMany(
-        repaired.map((campaign) => this.toServingCampaign(campaign))
-      );
+      this.upsertMany(repaired.map(toServingCampaign));
     }
 
     return uniqueIds.flatMap((id) => {
@@ -140,7 +131,7 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
     if (!this.enabled) {
       return;
     }
-    const campaign = this.toServingCampaign(event.campaign);
+    const campaign = toServingCampaign(event.campaign);
     this.recordMutation(campaign.id, campaign);
     if (this.initialized) {
       this.upsertMany([campaign]);
@@ -178,7 +169,7 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
     });
     const campaignsById = new Map(
       campaigns.map((campaign) => {
-        const servingCampaign = this.toServingCampaign(campaign);
+        const servingCampaign = toServingCampaign(campaign);
         return [servingCampaign.id, servingCampaign] as const;
       })
     );
@@ -258,26 +249,6 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
     return Boolean(
       compatible && hasTags && (!this.requireDocumentEmbedding || hasDocument)
     );
-  }
-
-  private toServingCampaign(campaign: CachedCampaign): ServingCampaign {
-    const embeddingTags = campaign.embeddingTags
-      ? Object.fromEntries(
-          Object.entries(campaign.embeddingTags).map(([tagName, vector]) => [
-            tagName,
-            new Float32Array(vector),
-          ])
-        )
-      : undefined;
-    const embeddingDocument = campaign.embeddingDocument
-      ? new Float32Array(campaign.embeddingDocument)
-      : undefined;
-
-    return {
-      ...campaign,
-      embeddingTags,
-      embeddingDocument,
-    };
   }
 
   private buildTagIndex(

@@ -48,6 +48,7 @@ export class LoadtestService {
     'backup:rollback:view:*',
     'dedup:view:*',
     'dedup:click:*',
+    'rtb:reservation:expirations',
   ];
 
   constructor(
@@ -255,12 +256,22 @@ export class LoadtestService {
         continue;
       }
 
-      await this.campaignCacheRepository.saveCampaignCacheById(campaignId, {
-        ...cached,
-        dailySpent: 0,
-        totalSpent: 0,
-        lastResetDate: resetTimestamp,
-      });
+      await this.campaignCacheRepository.saveCampaignCacheById(
+        campaignId,
+        {
+          ...cached,
+          dailySpent: 0,
+          totalSpent: 0,
+          dailyReserved: 0,
+          totalReserved: 0,
+          dailyReservedDate: new Date(Date.now() + 9 * 60 * 60 * 1000)
+            .toISOString()
+            .slice(0, 10),
+          lastResetDate: resetTimestamp,
+        },
+        undefined,
+        { preserveReservation: false }
+      );
       resetCount += 1;
     }
 

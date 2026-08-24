@@ -3,8 +3,13 @@ import { ConfigService } from '@nestjs/config';
 import { EventEmitter2 } from '@nestjs/event-emitter';
 import { IOREDIS_CLIENT } from 'src/redis/redis.constant';
 import type { AppIORedisClient } from 'src/redis/redis.type';
-import { CampaignCacheRepository } from './campaign.cache.repository.interface';
 import {
+  CampaignCacheRepository,
+  CampaignCacheSaveOptions,
+} from './campaign.cache.repository.interface';
+import {
+  AuctionReservationRecord,
+  AuctionTransitionResult,
   BudgetReservationCandidate,
   BudgetReservationResult,
   CachedCampaign,
@@ -13,12 +18,24 @@ import {
   CampaignEmbeddingPayload,
   CampaignTagVectorSearchHit,
   CampaignTagVectorSearchOptions,
+  ReserveAuctionRequest,
+  ReserveAuctionResult,
 } from '../types/campaign.types';
 import {
+  REDIS_COMMIT_AUCTION_SCRIPT,
   REDIS_DECREMENT_SPENT_SCRIPT,
   REDIS_INCREMENT_SPENT_SCRIPT,
+  REDIS_RELEASE_AUCTION_SCRIPT,
+  REDIS_REPLACE_SPENT_SCRIPT,
+  REDIS_RESET_DAILY_BUDGET_SCRIPT,
+  REDIS_RESERVE_AUCTION_SCRIPT,
   REDIS_RESERVE_FIRST_AVAILABLE_SCRIPT,
+  REDIS_SAVE_CAMPAIGN_PRESERVING_RESERVED_SCRIPT,
 } from '../scripts/lua-script';
+import {
+  AUCTION_KEY_PREFIX,
+  AUCTION_RESERVATION_EXPIRATIONS,
+} from '../constants/auction-reservation.constants';
 import {
   createRtbPathLogger,
   rtbPathLogsEnabled,
@@ -101,19 +118,36 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
   async saveCampaignCacheById(
     id: string,
     data: CachedCampaign,
-    ttl = this.CAMPAIGN_CACHE_TTL
+    ttl = this.CAMPAIGN_CACHE_TTL,
+    options: CampaignCacheSaveOptions = {}
   ): Promise<void> {
     const key = this.getCampaignCacheKey(id);
+    const normalized = this.withReservationDefaults(data);
 
     try {
-      await this.ioredisClient.call('JSON.SET', key, '$', JSON.stringify(data));
+      if (options.preserveReservation === false) {
+        await this.ioredisClient.call(
+          'JSON.SET',
+          key,
+          '$',
+          JSON.stringify(normalized)
+        );
+      } else {
+        await this.ioredisClient.eval(
+          REDIS_SAVE_CAMPAIGN_PRESERVING_RESERVED_SCRIPT,
+          1,
+          key,
+          JSON.stringify(normalized),
+          this.getKstBudgetDate(Date.now())
+        );
+      }
       await Promise.all([
         this.ioredisClient.expire(key, ttl), // Key에 TTL을 설정하는 명령 expire
         this.ioredisClient.sadd(this.CAMPAIGN_KEYS_SET, key),
       ]);
-      await this.syncCampaignTagVectorDocs(data);
-      await this.syncCampaignDocumentVectorDoc(data);
-      this.publishUpsert(data);
+      await this.syncCampaignTagVectorDocs(normalized);
+      await this.syncCampaignDocumentVectorDoc(normalized);
+      this.publishUpsert(normalized);
     } catch (error) {
       this.logger.error(`캐시 저장 실패: ${id}`, error);
       throw error;
@@ -287,32 +321,51 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     }
   }
 
-  async resetDailySpentCache(id: string): Promise<void> {
+  async replaceSpentCacheById(
+    id: string,
+    dailySpent: number,
+    totalSpent: number
+  ): Promise<void> {
     const key = this.getCampaignCacheKey(id);
 
     try {
-      // 개별 필드만 원자적으로 업데이트
-      await Promise.all([
-        this.ioredisClient.call('JSON.SET', key, '$.dailySpent', '0'),
-        this.ioredisClient.call(
-          'JSON.SET',
+      const replaced = Number(
+        await this.ioredisClient.eval(
+          REDIS_REPLACE_SPENT_SCRIPT,
+          1,
           key,
-          '$.lastResetDate',
-          JSON.stringify(new Date().toISOString())
-        ),
-      ]);
+          String(dailySpent),
+          String(totalSpent)
+        )
+      );
+      if (replaced !== 1) {
+        this.logger.warn(`spent 교체 대상 캠페인 캐시 없음: ${id}`);
+      }
+    } catch (error) {
+      this.logger.error(`spent 교체 실패: ${id}`, error);
+      throw error;
+    }
+  }
+
+  async resetDailySpentCache(id: string): Promise<void> {
+    const key = this.getCampaignCacheKey(id);
+    const now = new Date();
+
+    try {
+      await this.ioredisClient.eval(
+        REDIS_RESET_DAILY_BUDGET_SCRIPT,
+        1,
+        key,
+        this.getKstBudgetDate(now.getTime()),
+        now.toISOString()
+      );
     } catch (error) {
       this.logger.error(`일일 예산 리셋 실패: ${id}`, error);
       throw error;
     }
   }
 
-  async incrementSpent(
-    campaignId: string,
-    cpc: number,
-    dailyBudget: number,
-    totalBudget: number | null
-  ): Promise<boolean> {
+  async incrementSpent(campaignId: string, cpc: number): Promise<boolean> {
     const key = this.getCampaignCacheKey(campaignId);
 
     try {
@@ -321,9 +374,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
         REDIS_INCREMENT_SPENT_SCRIPT,
         1,
         key,
-        cpc.toString(),
-        dailyBudget.toString(),
-        totalBudget !== null ? totalBudget.toString() : 'null'
+        cpc.toString()
       )) as number;
 
       if (result === 1) {
@@ -343,6 +394,10 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
         if (this.logsEnabled) {
           this.logger.debug(`캠페인 ${campaignId} 총 예산 초과로 증가 실패`);
         }
+      } else if (result === -2) {
+        if (this.logsEnabled) {
+          this.logger.debug(`캠페인 ${campaignId} 비활성 상태로 증가 실패`);
+        }
       } else {
         if (this.logsEnabled) {
           this.logger.warn(
@@ -358,6 +413,10 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     }
   }
 
+  /**
+   * 순위가 확정된 후보를 앞에서부터 검사해 예산 확보가 가능한 첫 캠페인 하나를 예약한다.
+   * Lua 스크립트에서 예산 검증과 spent 증가를 원자적으로 처리하며, 예약할 후보가 없으면 null을 반환한다.
+   */
   async reserveFirstAvailable(
     candidates: BudgetReservationCandidate[]
   ): Promise<BudgetReservationResult | null> {
@@ -392,6 +451,159 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
       this.logger.error('순위 window winner-only 예약 실패', error);
       return null;
     }
+  }
+
+  async reserveAuction(
+    request: ReserveAuctionRequest
+  ): Promise<ReserveAuctionResult> {
+    if (request.candidates.length === 0) {
+      return { outcome: 'exhausted', attemptedCount: 0 };
+    }
+
+    const auctionKey = this.getAuctionKey(request.auctionId);
+    const campaignKeys = request.candidates.map((candidate) =>
+      this.getCampaignCacheKey(candidate.campaignId)
+    );
+    const cpcs = request.candidates.map((candidate) => String(candidate.cpc));
+    const campaignIds = request.candidates.map(
+      (candidate) => candidate.campaignId
+    );
+
+    try {
+      const raw = (await this.ioredisClient.eval(
+        REDIS_RESERVE_AUCTION_SCRIPT,
+        campaignKeys.length + 2,
+        AUCTION_RESERVATION_EXPIRATIONS,
+        auctionKey,
+        ...campaignKeys,
+        request.auctionId,
+        String(request.blogId),
+        request.budgetDate,
+        String(request.expiresAt),
+        String(this.CAMPAIGN_CACHE_TTL),
+        ...cpcs,
+        ...campaignIds
+      )) as unknown[];
+      const code = Number(raw?.[0]);
+      const attemptedCount = Number(raw?.[2] ?? request.candidates.length);
+      const reservation = this.parseAuctionReservation(raw?.[3]);
+
+      if (code === 1) {
+        return {
+          outcome: 'reserved',
+          reservation: reservation ?? undefined,
+          attemptedCount,
+        };
+      }
+      if (code === 2) {
+        return {
+          outcome: 'existing',
+          reservation: reservation ?? undefined,
+          attemptedCount,
+        };
+      }
+      if (code === -2) {
+        return { outcome: 'conflict', attemptedCount };
+      }
+      return { outcome: 'exhausted', attemptedCount };
+    } catch (error) {
+      this.logger.error(`경매 예약 생성 실패: ${request.auctionId}`, error);
+      throw error;
+    }
+  }
+
+  async getAuctionReservation(
+    auctionId: string
+  ): Promise<AuctionReservationRecord | null> {
+    const raw = await this.ioredisClient.get(this.getAuctionKey(auctionId));
+    return this.parseAuctionReservation(raw);
+  }
+
+  async commitAuction(
+    auctionId: string,
+    currentBudgetDate: string,
+    terminalTtlSeconds: number
+  ): Promise<AuctionTransitionResult> {
+    const current = await this.getAuctionReservation(auctionId);
+    if (!current) {
+      await this.ioredisClient.zrem(
+        AUCTION_RESERVATION_EXPIRATIONS,
+        auctionId
+      );
+      return { outcome: 'not_found' };
+    }
+    if (current.status === 'COMMITTED') {
+      return { outcome: 'already_committed', reservation: current };
+    }
+    if (current.status === 'RELEASED') {
+      return { outcome: 'already_released', reservation: current };
+    }
+    if (!('campaignId' in current)) {
+      return { outcome: 'invalid', reservation: current };
+    }
+
+    const raw = (await this.ioredisClient.eval(
+      REDIS_COMMIT_AUCTION_SCRIPT,
+      3,
+      this.getAuctionKey(auctionId),
+      AUCTION_RESERVATION_EXPIRATIONS,
+      this.getCampaignCacheKey(current.campaignId),
+      auctionId,
+      currentBudgetDate,
+      String(terminalTtlSeconds),
+      String(Date.now())
+    )) as unknown[];
+    return this.toTransitionResult(Number(raw?.[0]), raw?.[1], 'commit');
+  }
+
+  async releaseAuction(
+    auctionId: string,
+    terminalTtlSeconds: number
+  ): Promise<AuctionTransitionResult> {
+    const current = await this.getAuctionReservation(auctionId);
+    if (!current) {
+      await this.ioredisClient.zrem(
+        AUCTION_RESERVATION_EXPIRATIONS,
+        auctionId
+      );
+      return { outcome: 'not_found' };
+    }
+    if (current.status === 'COMMITTED') {
+      return { outcome: 'already_committed', reservation: current };
+    }
+    if (current.status === 'RELEASED') {
+      return { outcome: 'already_released', reservation: current };
+    }
+    if (!('campaignId' in current)) {
+      return { outcome: 'invalid', reservation: current };
+    }
+
+    const raw = (await this.ioredisClient.eval(
+      REDIS_RELEASE_AUCTION_SCRIPT,
+      3,
+      this.getAuctionKey(auctionId),
+      AUCTION_RESERVATION_EXPIRATIONS,
+      this.getCampaignCacheKey(current.campaignId),
+      auctionId,
+      String(terminalTtlSeconds),
+      String(Date.now())
+    )) as unknown[];
+    return this.toTransitionResult(Number(raw?.[0]), raw?.[1], 'release');
+  }
+
+  async findExpiredAuctionIds(
+    nowEpochMs: number,
+    limit: number
+  ): Promise<string[]> {
+    if (limit <= 0) return [];
+    return this.ioredisClient.zrangebyscore(
+      AUCTION_RESERVATION_EXPIRATIONS,
+      '-inf',
+      String(nowEpochMs),
+      'LIMIT',
+      0,
+      Math.floor(limit)
+    );
   }
 
   async decrementSpent(campaignId: string, cpc: number): Promise<void> {
@@ -665,6 +877,92 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
 
   private getCampaignCacheKey(id: string): string {
     return `${this.KEY_PREFIX}${id}`;
+  }
+
+  private getAuctionKey(auctionId: string): string {
+    return `${AUCTION_KEY_PREFIX}${auctionId}`;
+  }
+
+  private parseAuctionReservation(
+    raw: unknown
+  ): AuctionReservationRecord | null {
+    if (typeof raw !== 'string' || raw.length === 0) return null;
+    try {
+      const parsed = JSON.parse(raw) as Partial<AuctionReservationRecord>;
+      if (parsed.version !== 1 || typeof parsed.auctionId !== 'string') {
+        return null;
+      }
+      if (
+        parsed.status !== 'RESERVED' &&
+        parsed.status !== 'COMMITTED' &&
+        parsed.status !== 'RELEASED'
+      ) {
+        return null;
+      }
+      if (parsed.status === 'RESERVED') {
+        if (
+          typeof parsed.campaignId !== 'string' ||
+          typeof parsed.blogId !== 'number' ||
+          typeof parsed.cost !== 'number' ||
+          typeof parsed.budgetDate !== 'string' ||
+          typeof parsed.expiresAt !== 'number'
+        ) {
+          return null;
+        }
+      }
+      return parsed as AuctionReservationRecord;
+    } catch {
+      return null;
+    }
+  }
+
+  private toTransitionResult(
+    code: number,
+    rawReservation: unknown,
+    operation: 'commit' | 'release'
+  ): AuctionTransitionResult {
+    const reservation = this.parseAuctionReservation(rawReservation) ??
+      undefined;
+    if (code === 1) {
+      return {
+        outcome: operation === 'commit' ? 'committed' : 'released',
+        reservation,
+      };
+    }
+    if (code === 2) {
+      return {
+        outcome:
+          operation === 'commit' ? 'already_committed' : 'already_released',
+        reservation,
+      };
+    }
+    if (code === -1) {
+      return {
+        outcome:
+          operation === 'commit' ? 'already_released' : 'already_committed',
+        reservation,
+      };
+    }
+    if (code === -2) return { outcome: 'expired', reservation };
+    if (code === -3) return { outcome: 'released', reservation };
+    if (code === -99) return { outcome: 'not_found' };
+    return { outcome: 'invalid', reservation };
+  }
+
+  private withReservationDefaults(data: CachedCampaign): CachedCampaign {
+    return {
+      ...data,
+      dailyReserved: data.dailyReserved ?? 0,
+      totalReserved: data.totalReserved ?? 0,
+      dailyReservedDate:
+        data.dailyReservedDate ?? this.getKstBudgetDate(Date.now()),
+    };
+  }
+
+  private getKstBudgetDate(epochMs: number): string {
+    return new Date(epochMs + 9 * 60 * 60 * 1000)
+      .toISOString()
+      .slice(0, 10);
   }
 
   private getCampaignTagVectorDocKey(

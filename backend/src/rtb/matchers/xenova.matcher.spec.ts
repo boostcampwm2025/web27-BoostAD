@@ -6,6 +6,7 @@ import { TransformerMatcher } from './xenova.matcher';
 import { CampaignCacheRepository } from '../../campaign/repository/campaign.cache.repository.interface';
 import type { CachedCampaign } from '../../campaign/types/campaign.types';
 import { CampaignServingSnapshotService } from '../../campaign/campaign-serving-snapshot.service';
+import { toServingCampaign } from '../../campaign/serving-campaign';
 import { ContextEmbeddingService } from '../context/context-embedding.service';
 
 describe('TransformerMatcher ANN path', () => {
@@ -163,27 +164,30 @@ describe('TransformerMatcher ANN path', () => {
       findCampaignCachesByIds: jest.Mock;
     };
 
-  const buildSnapshot = (campaigns: CachedCampaign[]) =>
-    ({
+  const buildSnapshot = (campaigns: CachedCampaign[]) => {
+    const servingCampaigns = campaigns.map(toServingCampaign);
+
+    return {
       findCampaignsByIds: jest.fn((ids: string[]) =>
         Promise.resolve(
           ids.flatMap((id) => {
-            const campaign = campaigns.find((item) => item.id === id);
+            const campaign = servingCampaigns.find((item) => item.id === id);
             return campaign ? [campaign] : [];
           })
         )
       ),
       findCampaignsByTags: jest.fn((tags: string[]) =>
         Promise.resolve(
-          campaigns.filter((campaign) =>
+          servingCampaigns.filter((campaign) =>
             campaign.tags?.some((tag) => tags.includes(tag.toLowerCase()))
           )
         )
       ),
-    }) as unknown as CampaignServingSnapshotService & {
+    } as unknown as CampaignServingSnapshotService & {
       findCampaignsByIds: jest.Mock;
       findCampaignsByTags: jest.Mock;
     };
+  };
 
   beforeAll(() => {
     jest.useFakeTimers().setSystemTime(now);
@@ -227,7 +231,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -263,7 +267,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -310,7 +314,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -358,7 +362,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -372,7 +376,7 @@ describe('TransformerMatcher ANN path', () => {
       'dense-1',
       'sparse-1',
     ]);
-    expect(repository.reserveFirstAvailable).not.toBeDefined();
+    expect('reserveFirstAvailable' in repository).toBe(false);
   });
 
   it('returns Hybrid rankings from findQualityRankings(hybrid)', async () => {
@@ -481,8 +485,8 @@ describe('TransformerMatcher ANN path', () => {
       'dense-exact-1',
       'sparse-1',
     ]);
-    expect(hybrid[0].similarity).toBe(0.6);
-    expect(hybrid[1].similarity).toBe(0.9);
+    expect(hybrid[0].similarity).toBeCloseTo(0.6, 6);
+    expect(hybrid[1].similarity).toBeCloseTo(0.9, 6);
     expect(hybrid[2].score).toBeLessThan(hybrid[1].score);
   });
 
@@ -508,7 +512,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -544,7 +548,7 @@ describe('TransformerMatcher ANN path', () => {
     );
 
     await expect(
-      matcher.findCandidatesByTags({
+      matcher.matchCandidates({
         blogKey: 'blog',
         blogId: 1,
         blogName: 'blog',
@@ -579,7 +583,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -613,7 +617,7 @@ describe('TransformerMatcher ANN path', () => {
       config
     );
 
-    await matcher.findCandidatesByTags({
+    await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -623,7 +627,7 @@ describe('TransformerMatcher ANN path', () => {
       isHighIntent: false,
     });
 
-    await matcher.findCandidatesByTags({
+    await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -652,7 +656,7 @@ describe('TransformerMatcher ANN path', () => {
       config
     );
 
-    await matcher.findCandidatesByTags({
+    await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -661,7 +665,7 @@ describe('TransformerMatcher ANN path', () => {
       behaviorScore: 20,
       isHighIntent: false,
     });
-    await matcher.findCandidatesByTags({
+    await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -704,7 +708,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -753,7 +757,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -807,7 +811,7 @@ describe('TransformerMatcher ANN path', () => {
       contextEmbeddingService
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -855,7 +859,7 @@ describe('TransformerMatcher ANN path', () => {
       contextEmbeddingService
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -908,7 +912,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -939,7 +943,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -965,7 +969,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    const candidates = await matcher.findCandidatesByTags({
+    const candidates = await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -998,7 +1002,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    await matcher.findCandidatesByTags({
+    await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -1040,7 +1044,7 @@ describe('TransformerMatcher ANN path', () => {
           resolveForDecision: jest.fn().mockResolvedValue({ status }),
         } as unknown as ContextEmbeddingService
       );
-      const candidates = await matcher.findCandidatesByTags({
+      const candidates = await matcher.matchCandidates({
         blogKey: 'blog',
         blogId: 1,
         blogName: 'blog',
@@ -1086,7 +1090,7 @@ describe('TransformerMatcher ANN path', () => {
       })
     );
 
-    await matcher.findCandidatesByTags({
+    await matcher.matchCandidates({
       blogKey: 'blog',
       blogId: 1,
       blogName: 'blog',
@@ -1153,8 +1157,8 @@ describe('TransformerMatcher ANN path', () => {
       );
 
     const [redisCandidates, snapshotCandidates] = await Promise.all([
-      build('redis_json').findCandidatesByTags(context),
-      build('local_snapshot').findCandidatesByTags(context),
+      build('redis_json').matchCandidates(context),
+      build('local_snapshot').matchCandidates(context),
     ]);
 
     expect(

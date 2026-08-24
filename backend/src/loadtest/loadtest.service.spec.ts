@@ -68,16 +68,21 @@ describe('LoadtestService', () => {
         if (entity === CampaignEntity) return campaignRepo;
         throw new Error('Unexpected repository');
       }),
-      transaction: jest.fn(async (callback: (manager: { getRepository: (entity: unknown) => unknown }) => Promise<unknown>) =>
-        callback({
-          getRepository: (entity: unknown) => {
-            if (entity === CampaignEntity) return campaignRepo;
-            if (entity === ViewLogEntity) return viewLogRepo;
-            if (entity === ClickLogEntity) return clickLogRepo;
-            if (entity === BidLogEntity) return bidLogRepo;
-            throw new Error('Unexpected manager repository');
-          },
-        })
+      transaction: jest.fn(
+        async (
+          callback: (manager: {
+            getRepository: (entity: unknown) => unknown;
+          }) => Promise<unknown>
+        ) =>
+          callback({
+            getRepository: (entity: unknown) => {
+              if (entity === CampaignEntity) return campaignRepo;
+              if (entity === ViewLogEntity) return viewLogRepo;
+              if (entity === ClickLogEntity) return clickLogRepo;
+              if (entity === BidLogEntity) return bidLogRepo;
+              throw new Error('Unexpected manager repository');
+            },
+          })
       ),
     };
 
@@ -145,7 +150,11 @@ describe('LoadtestService', () => {
       expect.objectContaining({
         dailySpent: 0,
         totalSpent: 0,
-      })
+        dailyReserved: 0,
+        totalReserved: 0,
+      }),
+      undefined,
+      { preserveReservation: false }
     );
   });
 
