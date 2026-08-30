@@ -18,15 +18,26 @@ duration="${DURATION:-60s}"
 rate="${RATE:-30}"
 pre_allocated_vus="${PRE_ALLOCATED_VUS:-40}"
 max_vus="${MAX_VUS:-120}"
+drain_timeout_secs="${DRAIN_TIMEOUT_SECS:-60}"
+business_success_threshold="${BUSINESS_SUCCESS_THRESHOLD:-0.999}"
+expected_embedding_replicas="${EXPECTED_EMBEDDING_WORKER_REPLICAS:-1}"
+expected_reservation_replicas="${EXPECTED_RESERVATION_WORKER_REPLICAS:-1}"
+k6_quiet="${K6_QUIET:-false}"
+load_monitor_interval_secs="${LOAD_MONITOR_INTERVAL_SECS:-0}"
 duration_sec="$(parse_duration_sec "$duration")"
 suite_failed=0
 
 mkdir -p "$output_root"
+# The profile runner changes into .loadtest for reset/k6 execution. Resolve the
+# artifact root once so every child process writes into the same run directory.
+output_root="$(cd "$output_root" && pwd)"
 
 git_sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
 git_diff_sha="$(git -C "$repo_root" diff --binary 2>/dev/null | shasum -a 256 | awk '{print $1}')"
 backend_image="$(backend_image_id)"
 backend_compose="$(backend_compose_image)"
+embedding_replicas="$(embedding_worker_replica_count)"
+reservation_replicas="$(reservation_worker_replica_count)"
 capture_backend_flags >"${output_root}/backend_env.txt" || true
 
 ann_enabled="$(awk -F= '/^RTB_MATCHER_ANN_ENABLED=/{print $2}' "${output_root}/backend_env.txt" 2>/dev/null || true)"
@@ -50,6 +61,11 @@ jq -n \
   --argjson durationSec "$duration_sec" \
   --argjson preAllocatedVUs "$pre_allocated_vus" \
   --argjson maxVus "$max_vus" \
+  --argjson drainTimeoutSecs "$drain_timeout_secs" \
+  --argjson businessSuccessThreshold "$business_success_threshold" \
+  --argjson loadMonitorIntervalSecs "$load_monitor_interval_secs" \
+  --argjson embeddingWorkerReplicas "$embedding_replicas" \
+  --argjson reservationWorkerReplicas "$reservation_replicas" \
   --arg annEnabled "${RTB_MATCHER_ANN_ENABLED:-${ann_enabled:-}}" \
   --arg campaignSource "${RTB_CAMPAIGN_SOURCE:-${campaign_source_flag:-}}" \
   --arg contextDecision "${RTB_CONTEXT_DECISION_ENABLED:-${context_decision_flag:-}}" \
@@ -68,6 +84,13 @@ jq -n \
     durationSec: $durationSec,
     PRE_ALLOCATED_VUS: $preAllocatedVUs,
     MAX_VUS: $maxVus,
+    drainTimeoutSecs: $drainTimeoutSecs,
+    businessSuccessThreshold: $businessSuccessThreshold,
+    loadMonitorIntervalSecs: $loadMonitorIntervalSecs,
+    services: {
+      embeddingWorkerReplicas: $embeddingWorkerReplicas,
+      reservationWorkerReplicas: $reservationWorkerReplicas
+    },
     profiles: ($profiles | split(" ") | map(select(length > 0))),
     RTB_MATCHER_ANN_ENABLED: $annEnabled,
     RTB_CAMPAIGN_SOURCE: $campaignSource,
@@ -77,6 +100,23 @@ jq -n \
     corpusHash: $datasetHash,
     backend: {imageId: $backendImage, composeImage: $backendComposeImage}
   }' >"${output_root}/manifest.json"
+
+if [ "$embedding_replicas" -ne "$expected_embedding_replicas" ] || \
+  [ "$reservation_replicas" -ne "$expected_reservation_replicas" ]; then
+  jq -n \
+    --argjson embeddingActual "$embedding_replicas" \
+    --argjson embeddingExpected "$expected_embedding_replicas" \
+    --argjson reservationActual "$reservation_replicas" \
+    --argjson reservationExpected "$expected_reservation_replicas" \
+    '{
+      suiteFailed:1,
+      valid:false,
+      reason:"worker_replica_contract_mismatch",
+      embeddingWorker:{actual:$embeddingActual,expected:$embeddingExpected},
+      reservationWorker:{actual:$reservationActual,expected:$reservationExpected}
+    }' >"${output_root}/suite_verdict.json"
+  exit 1
+fi
 
 reset_state() {
   local output="$1"
@@ -93,6 +133,46 @@ reset_state() {
 # Avoid winner_only cliff on hot/mixed. Mutate only campaign:keys members.
 boost_campaign_budgets() {
   apply_stable_budget
+}
+
+drain_embedding_queue() {
+  local timeout="$1"
+  local samples_file="$2"
+  local elapsed=0
+  local wait active delayed
+
+  printf 'elapsed_sec\twait\tactive\tdelayed\n' >"$samples_file"
+  while [ "$elapsed" -le "$timeout" ]; do
+    read -r wait active delayed <<<"$(embedding_queue_counts)"
+    printf '%s\t%s\t%s\t%s\n' "$elapsed" "$wait" "$active" "$delayed" \
+      >>"$samples_file"
+    if [ "$wait" -eq 0 ] && [ "$active" -eq 0 ] && [ "$delayed" -eq 0 ]; then
+      printf '%s\n' "$elapsed"
+      return 0
+    fi
+    sleep 1
+    elapsed=$((elapsed + 1))
+  done
+
+  printf '%s\n' "$timeout"
+  return 1
+}
+
+monitor_embedding_queue() {
+  local output="$1"
+  local interval="$2"
+  local elapsed=0
+  local wait active delayed failed
+
+  printf 'elapsed_sec\twait\tactive\tdelayed\tfailed\n' >"$output"
+  while true; do
+    read -r wait active delayed <<<"$(embedding_queue_counts)"
+    failed="$(embedding_failed_job_count)"
+    printf '%s\t%s\t%s\t%s\t%s\n' \
+      "$elapsed" "$wait" "$active" "$delayed" "$failed" >>"$output"
+    sleep "$interval"
+    elapsed=$((elapsed + interval))
+  done
 }
 
 run_content_profile() {
@@ -112,6 +192,9 @@ run_content_profile() {
   read -r q_wait_before q_active_before q_delayed_before <<<"$(embedding_queue_counts)"
   printf '%s %s %s\n' "$q_wait_before" "$q_active_before" "$q_delayed_before" \
     >"${cell_dir}/queue_before.txt"
+  local failed_before
+  failed_before="$(embedding_failed_job_count)"
+  capture_loadtest_container_stats "${cell_dir}/container_stats_before.ndjson" || true
 
   reset_state "${cell_dir}/reset.json" || return 1
   if ! boost_campaign_budgets >"${cell_dir}/stable_budget.log" 2>&1; then
@@ -124,6 +207,17 @@ run_content_profile() {
   cat "${cell_dir}/stable_budget.log"
   curl -fsS "${base_url}/api/metrics" >"${cell_dir}/metrics_before.txt"
 
+  local -a k6_args=()
+  if [ "$k6_quiet" = "true" ]; then
+    k6_args+=(--quiet)
+  fi
+  local monitor_pid=""
+  if [ "$load_monitor_interval_secs" -gt 0 ]; then
+    monitor_embedding_queue \
+      "${cell_dir}/queue_during_load.tsv" \
+      "$load_monitor_interval_secs" &
+    monitor_pid=$!
+  fi
   (
     cd "$loadtest_dir"
     BASE_URL="$base_url" CONTENT_MODE="$mode" \
@@ -131,16 +225,33 @@ run_content_profile() {
     HOT_POOL_SIZE="${HOT_POOL_SIZE:-40}" \
     PRE_ALLOCATED_VUS="$pre_allocated_vus" MAX_VUS="$max_vus" \
     BLOG_KEY="${BLOG_KEY:-test-blog}" \
-      k6 run --summary-export "${cell_dir}/k6_summary.json" \
+      k6 run "${k6_args[@]}" --summary-export "${cell_dir}/k6_summary.json" \
         k6/http/rtb-decision-context-content.js
   ) 2>&1 | tee "${cell_dir}/k6_stdout.txt"
   local k6_rc=${PIPESTATUS[0]}
+  if [ -n "$monitor_pid" ]; then
+    kill "$monitor_pid" 2>/dev/null || true
+    wait "$monitor_pid" 2>/dev/null || true
+  fi
   printf '%s\n' "$k6_rc" >"${cell_dir}/k6_exit_code.txt"
   # Preserve raw artifacts regardless of threshold/k6 outcome.
   curl -fsS "${base_url}/api/metrics" >"${cell_dir}/metrics_after.txt"
   read -r q_wait_after q_active_after q_delayed_after <<<"$(embedding_queue_counts)"
   printf '%s %s %s\n' "$q_wait_after" "$q_active_after" "$q_delayed_after" \
     >"${cell_dir}/queue_after.txt"
+  capture_loadtest_container_stats "${cell_dir}/container_stats_after_load.ndjson" || true
+
+  local drain_seconds drained=false
+  if drain_seconds="$(drain_embedding_queue "$drain_timeout_secs" "${cell_dir}/drain_samples.tsv")"; then
+    drained=true
+  fi
+  local q_wait_final q_active_final q_delayed_final failed_after failed_delta
+  read -r q_wait_final q_active_final q_delayed_final <<<"$(embedding_queue_counts)"
+  printf '%s %s %s\n' "$q_wait_final" "$q_active_final" "$q_delayed_final" \
+    >"${cell_dir}/queue_final.txt"
+  failed_after="$(embedding_failed_job_count)"
+  failed_delta=$((failed_after - failed_before))
+  capture_loadtest_container_stats "${cell_dir}/container_stats_after_drain.ndjson" || true
 
   if [ -f "${cell_dir}/k6_summary.json" ]; then
     ANALYZE_DURATION_SEC="$duration_sec" \
@@ -163,7 +274,7 @@ run_content_profile() {
     "true"
 
   local biz runtime lexical_count context_src dropped l1_hit l2_hit
-  local p50 p95 p99 max_ms completed_rps
+  local p50 p95 p99 max_ms completed_rps context_fraction
   biz="$(jq -r '.k6.businessSuccessRate // 0' "${cell_dir}/analysis.json")"
   runtime="$(jq -r '.server.embedding.runtime // 0' "${cell_dir}/analysis.json")"
   lexical_count="$(jq -r '(.server.lexicalFallback.total // 0)' "${cell_dir}/analysis.json")"
@@ -176,27 +287,33 @@ run_content_profile() {
   p99="$(jq -r '.k6.successOnly.p99 // .k6.p99Ms // 0' "${cell_dir}/analysis.json")"
   max_ms="$(jq -r '.k6.successOnly.max // .k6.maxMs // 0' "${cell_dir}/analysis.json")"
   completed_rps="$(jq -r '.k6.completedRps // 0' "${cell_dir}/analysis.json")"
+  context_fraction="$(awk -v c="$context_src" -v l="$lexical_count" \
+    'BEGIN { total=c+l; if (total==0) print 0; else printf "%.6f", c/total }')"
 
   local pass=false
   case "$mode" in
     hot)
       # warm: context used, runtime≈0, lexical≈0, success high, no drop, p95 bound
-      if awk -v b="$biz" -v r="$runtime" -v d="$dropped" -v c="$context_src" \
-        -v l="$lexical_count" -v h="$l1_hit" -v p="$p95" \
-        'BEGIN{exit !((b+0)>=0.99 && (r+0)<=1 && (d+0)==0 && (c+0)>0 && (l+0)<=2 && (h+0)>0 && (p+0)<300)}'; then
+      if awk -v b="$biz" -v threshold="$business_success_threshold" \
+        -v r="$runtime" -v d="$dropped" -v h="$l1_hit" -v p="$p95" \
+        -v f="$context_fraction" -v drained="$drained" -v failed="$failed_delta" \
+        'BEGIN{exit !((b+0)>=threshold && (r+0)==0 && (d+0)==0 && (h+0)>0 && (p+0)<300 && (f+0)>=0.98 && drained=="true" && (failed+0)==0)}'; then
         pass=true
       fi
       ;;
     cold)
-      if awk -v b="$biz" -v r="$runtime" -v d="$dropped" -v l="$lexical_count" -v p="$p95" \
-        'BEGIN{exit !((b+0)>=0.99 && (r+0)==0 && (d+0)==0 && (l+0)>0 && (p+0)<300)}'; then
+      if awk -v b="$biz" -v threshold="$business_success_threshold" \
+        -v r="$runtime" -v d="$dropped" -v l="$lexical_count" -v p="$p95" \
+        -v f="$context_fraction" -v drained="$drained" -v failed="$failed_delta" \
+        'BEGIN{exit !((b+0)>=threshold && (r+0)==0 && (d+0)==0 && (l+0)>0 && (p+0)<300 && (f+0)<=0.02 && drained=="true" && (failed+0)==0)}'; then
         pass=true
       fi
       ;;
     mixed)
-      if awk -v b="$biz" -v r="$runtime" -v d="$dropped" -v c="$context_src" \
-        -v l="$lexical_count" -v p="$p95" \
-        'BEGIN{exit !((b+0)>=0.99 && (r+0)==0 && (d+0)==0 && (c+0)>0 && (l+0)>0 && (p+0)<300)}'; then
+      if awk -v b="$biz" -v threshold="$business_success_threshold" \
+        -v r="$runtime" -v d="$dropped" -v c="$context_src" -v l="$lexical_count" \
+        -v p="$p95" -v f="$context_fraction" -v drained="$drained" -v failed="$failed_delta" \
+        'BEGIN{exit !((b+0)>=threshold && (r+0)==0 && (d+0)==0 && (c+0)>0 && (l+0)>0 && (p+0)<300 && (f+0)>=0.60 && (f+0)<=0.80 && drained=="true" && (failed+0)==0)}'; then
         pass=true
       fi
       ;;
@@ -209,14 +326,34 @@ run_content_profile() {
     --argjson dropped "$dropped" \
     --argjson p50 "$p50" --argjson p95 "$p95" --argjson p99 "$p99" --argjson maxMs "$max_ms" \
     --argjson completedRps "$completed_rps" \
+    --argjson contextFraction "$context_fraction" \
     --argjson queueWaitBefore "$q_wait_before" --argjson queueWaitAfter "$q_wait_after" \
+    --argjson queueWaitFinal "$q_wait_final" --argjson queueActiveFinal "$q_active_final" \
+    --argjson queueDelayedFinal "$q_delayed_final" --argjson drainSeconds "$drain_seconds" \
+    --argjson drained "$drained" --argjson failedJobDelta "$failed_delta" \
+    --argjson embeddingWorkerReplicas "$embedding_replicas" \
+    --argjson reservationWorkerReplicas "$reservation_replicas" \
     '{
       profile:$profile,mode:$mode,pass:$pass,
       businessSuccessRate:$biz,runtime:$runtime,contextSource:$contextSrc,
       lexical:$lexical,l1Hit:$l1Hit,l2Hit:$l2Hit,droppedIterations:$dropped,
+      contextFraction:$contextFraction,
       successOnly:{p50:$p50,p95:$p95,p99:$p99,max:$maxMs},
       completedRps:$completedRps,
-      queue:{waitBefore:$queueWaitBefore,waitAfter:$queueWaitAfter},
+      queue:{
+        waitBefore:$queueWaitBefore,
+        waitAfterLoad:$queueWaitAfter,
+        waitFinal:$queueWaitFinal,
+        activeFinal:$queueActiveFinal,
+        delayedFinal:$queueDelayedFinal,
+        drained:$drained,
+        drainSeconds:$drainSeconds
+      },
+      failedJobDelta:$failedJobDelta,
+      services:{
+        embeddingWorkerReplicas:$embeddingWorkerReplicas,
+        reservationWorkerReplicas:$reservationWorkerReplicas
+      },
       evidence:"PROVISIONAL"
     }' >"${cell_dir}/verdict.json"
 
@@ -304,7 +441,7 @@ run_worker_down() {
   local cell_dir="${output_root}/worker-down"
   mkdir -p "$cell_dir"
   printf '[phase3] start worker-down\n'
-  docker stop boostad-backend-worker-local >/dev/null 2>&1 || true
+  stop_embedding_workers >/dev/null 2>&1 || true
   local title="worker-down-${run_id}"
   curl -fsS "${base_url}/api/metrics" >"${cell_dir}/metrics_before.txt"
   local obs
@@ -328,7 +465,7 @@ run_worker_down() {
   lex_a="$(awk '$1 ~ /^boostad_rtb_lexical_fallback_total/ {s+=$2} END{print s+0}' "${cell_dir}/metrics_after.txt")"
   local pass=false
   if [ "$((rt_a-rt_b))" -eq 0 ] && [ "$((lex_a-lex_b))" -ge 1 ]; then pass=true; fi
-  docker start boostad-backend-worker-local >/dev/null 2>&1 || true
+  start_embedding_workers >/dev/null 2>&1 || true
   # give worker a moment after restart
   sleep 3
   jq -n --argjson pass "$pass" --argjson runtimeDelta "$((rt_a-rt_b))" --argjson lexicalDelta "$((lex_a-lex_b))" \
@@ -347,7 +484,7 @@ run_queue_pressure() {
   printf '[phase3] start queue-pressure\n'
   reset_state "${cell_dir}/reset.json" || return 1
   # ensure worker is up
-  docker start boostad-backend-worker-local >/dev/null 2>&1 || true
+  start_embedding_workers >/dev/null 2>&1 || true
   sleep 2
   curl -fsS "${base_url}/api/metrics" >"${cell_dir}/metrics_before.txt"
   local wait_before; wait_before="$(queue_wait_len)"

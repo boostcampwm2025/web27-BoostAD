@@ -1,6 +1,35 @@
 #!/usr/bin/env bash
 # Shared helpers for RTB loadtest harness (sourced by suite/profile scripts).
 
+loadtest_repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+
+loadtest_compose() {
+  docker compose -p "${LOADTEST_COMPOSE_PROJECT_NAME:-web27-boostcamp}" \
+    -f "${loadtest_repo_root}/docker-compose.local.yml" \
+    -f "${loadtest_repo_root}/docker-compose.local.backend.yml" \
+    "$@"
+}
+
+embedding_worker_replica_count() {
+  loadtest_compose ps -q embedding-worker 2>/dev/null |
+    awk 'NF { count += 1 } END { print count + 0 }'
+}
+
+reservation_worker_replica_count() {
+  loadtest_compose ps -q reservation-worker 2>/dev/null |
+    awk 'NF { count += 1 } END { print count + 0 }'
+}
+
+start_embedding_workers() {
+  local replicas="${1:-${EMBEDDING_WORKER_REPLICAS:-1}}"
+  loadtest_compose up -d --no-deps \
+    --scale "embedding-worker=${replicas}" embedding-worker
+}
+
+stop_embedding_workers() {
+  loadtest_compose stop embedding-worker
+}
+
 parse_duration_sec() {
   local raw="${1:-60s}"
   case "$raw" in
@@ -48,6 +77,22 @@ embedding_queue_counts() {
   active="$(redis_cli LLEN "$(embedding_queue_key active)" 2>/dev/null || echo 0)"
   delayed="$(redis_cli ZCARD "$(embedding_queue_key delayed)" 2>/dev/null || echo 0)"
   printf '%s %s %s\n' "${wait:-0}" "${active:-0}" "${delayed:-0}"
+}
+
+embedding_failed_job_count() {
+  redis_cli ZCARD "$(embedding_queue_key failed)" 2>/dev/null || echo 0
+}
+
+capture_loadtest_container_stats() {
+  local output="$1"
+  local ids
+  ids="$(loadtest_compose ps -q backend embedding-worker reservation-worker redis mysql 2>/dev/null)"
+  if [ -z "$ids" ]; then
+    : >"$output"
+    return 1
+  fi
+  # shellcheck disable=SC2086
+  docker stats --no-stream --format '{{json .}}' $ids >"$output"
 }
 
 assert_embedding_queue_empty() {

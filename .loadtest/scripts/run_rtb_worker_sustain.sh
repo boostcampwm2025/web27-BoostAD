@@ -16,6 +16,9 @@ output_root="${OUTPUT_DIR:-${loadtest_dir}/results/${run_id}}"
 rates="${RATES:-10 20 30}"
 load_secs="${LOAD_SECS:-60}"
 drain_timeout_secs="${DRAIN_TIMEOUT_SECS:-300}"
+recovery_slo_secs="${RECOVERY_SLO_SECS:-60}"
+expected_embedding_replicas="${EXPECTED_EMBEDDING_WORKER_REPLICAS:-1}"
+expected_reservation_replicas="${EXPECTED_RESERVATION_WORKER_REPLICAS:-1}"
 suite_failed=0
 
 mkdir -p "$output_root"
@@ -23,6 +26,8 @@ mkdir -p "$output_root"
 git_sha="$(git -C "$repo_root" rev-parse HEAD 2>/dev/null || echo unknown)"
 git_diff_sha="$(git -C "$repo_root" diff --binary 2>/dev/null | shasum -a 256 | awk '{print $1}')"
 backend_image="$(backend_image_id)"
+embedding_replicas="$(embedding_worker_replica_count)"
+reservation_replicas="$(reservation_worker_replica_count)"
 capture_backend_flags >"${output_root}/backend_env.txt" || true
 
 jq -n \
@@ -30,6 +35,9 @@ jq -n \
   --arg rates "$rates" \
   --argjson loadSecs "$load_secs" \
   --argjson drainTimeoutSecs "$drain_timeout_secs" \
+  --argjson recoverySloSecs "$recovery_slo_secs" \
+  --argjson embeddingWorkerReplicas "$embedding_replicas" \
+  --argjson reservationWorkerReplicas "$reservation_replicas" \
   --arg gitSha "$git_sha" \
   --arg gitDiffSha "$git_diff_sha" \
   --arg backendImage "$backend_image" \
@@ -40,18 +48,40 @@ jq -n \
     rates:($rates|split(" ")|map(tonumber)),
     loadSecs:$loadSecs,
     drainTimeoutSecs:$drainTimeoutSecs,
+    recoverySloSecs:$recoverySloSecs,
     gitSha:$gitSha,
     gitDiffSha:$gitDiffSha,
-    backend:{imageId:$backendImage}
+    backend:{imageId:$backendImage},
+    services:{
+      embeddingWorkerReplicas:$embeddingWorkerReplicas,
+      reservationWorkerReplicas:$reservationWorkerReplicas
+    }
   }' >"${output_root}/manifest.json"
 
+if [ "$embedding_replicas" -ne "$expected_embedding_replicas" ] || \
+  [ "$reservation_replicas" -ne "$expected_reservation_replicas" ]; then
+  jq -n \
+    --argjson embeddingActual "$embedding_replicas" \
+    --argjson embeddingExpected "$expected_embedding_replicas" \
+    --argjson reservationActual "$reservation_replicas" \
+    --argjson reservationExpected "$expected_reservation_replicas" \
+    '{
+      suiteFailed:1,
+      valid:false,
+      reason:"worker_replica_contract_mismatch",
+      embeddingWorker:{actual:$embeddingActual,expected:$embeddingExpected},
+      reservationWorker:{actual:$reservationActual,expected:$reservationExpected}
+    }' >"${output_root}/suite_verdict.json"
+  exit 1
+fi
+
 require_worker_up() {
-  if ! docker ps --format '{{.Names}}' | grep -qx 'boostad-backend-worker-local'; then
-    docker start boostad-backend-worker-local >/dev/null 2>&1 || true
+  if [ "$(embedding_worker_replica_count)" -lt 1 ]; then
+    start_embedding_workers >/dev/null 2>&1 || true
     sleep 3
   fi
-  if ! docker ps --format '{{.Names}}' | grep -qx 'boostad-backend-worker-local'; then
-    printf '[worker-sustain] backend-worker not running\n' >&2
+  if [ "$(embedding_worker_replica_count)" -lt 1 ]; then
+    printf '[worker-sustain] embedding-worker not running\n' >&2
     return 1
   fi
 }
@@ -82,7 +112,7 @@ runtime_inference_total() {
 }
 
 failed_jobs() {
-  redis_cli ZCARD "$(embedding_queue_key failed)" 2>/dev/null || echo 0
+  embedding_failed_job_count
 }
 
 run_rate_cell() {
@@ -105,6 +135,7 @@ run_rate_cell() {
   fi
 
   curl -fsS "${base_url}/api/metrics" >"${cell_dir}/metrics_before.txt"
+  capture_loadtest_container_stats "${cell_dir}/container_stats_before.ndjson" || true
   local runtime_before failed_before
   runtime_before="$(runtime_inference_total "${cell_dir}/metrics_before.txt")"
   failed_before="$(failed_jobs)"
@@ -169,6 +200,7 @@ run_rate_cell() {
   printf '%s %s %s\n' "$wait_at_stop" "$active_at_stop" "$delayed_at_stop" \
     >"${cell_dir}/queue_at_load_end.txt"
   curl -fsS "${base_url}/api/metrics" >"${cell_dir}/metrics_after_load.txt"
+  capture_loadtest_container_stats "${cell_dir}/container_stats_after_load.ndjson" || true
 
   # Drain observation (max 5 minutes)
   local drain_start=$SECONDS
@@ -195,6 +227,7 @@ run_rate_cell() {
   fi
 
   curl -fsS "${base_url}/api/metrics" >"${cell_dir}/metrics_after_drain.txt"
+  capture_loadtest_container_stats "${cell_dir}/container_stats_after_drain.ndjson" || true
   local runtime_after failed_after
   runtime_after="$(runtime_inference_total "${cell_dir}/metrics_after_drain.txt")"
   failed_after="$(failed_jobs)"
@@ -220,11 +253,13 @@ run_rate_cell() {
   local failed_delta=$((failed_after - failed_before))
   local recovery_pass=false
   local pass=false
-  if [ "$recovered" -eq 1 ] && [ "$wait_final" -eq 0 ]; then
+  if [ "$recovered" -eq 1 ] && [ "$wait_final" -eq 0 ] && \
+    [ "$drain_secs" -le "$recovery_slo_secs" ]; then
     recovery_pass=true
   fi
   # Cell pass: recovery + no decision runtime inference during observe-only load
-  if [ "$recovery_pass" = "true" ] && [ "$runtime_delta" -eq 0 ] && [ "$slope_rising" -eq 0 ]; then
+  if [ "$recovery_pass" = "true" ] && [ "$runtime_delta" -eq 0 ] && \
+    [ "$slope_rising" -eq 0 ] && [ "$failed_delta" -eq 0 ]; then
     pass=true
   fi
 
@@ -240,10 +275,13 @@ run_rate_cell() {
     --argjson delayedFinal "$delayed_final" \
     --argjson failedDelta "$failed_delta" \
     --argjson drainSecs "$drain_secs" \
+    --argjson recoverySloSecs "$recovery_slo_secs" \
     --argjson slopeRising "$slope_rising" \
     --argjson runtimeDelta "$runtime_delta" \
     --argjson recoveryPass "$recovery_pass" \
     --argjson pass "$pass" \
+    --argjson embeddingWorkerReplicas "$embedding_replicas" \
+    --argjson reservationWorkerReplicas "$reservation_replicas" \
     '{
       profile:"worker-sustain",
       rate:$rate,
@@ -255,9 +293,14 @@ run_rate_cell() {
       failedJobDelta:$failedDelta,
       loadSlopeRising:($slopeRising==1),
       drainSeconds:$drainSecs,
+      recoverySloSeconds:$recoverySloSecs,
       decisionRuntimeInferenceDelta:$runtimeDelta,
       recoveryPass:$recoveryPass,
       pass:$pass,
+      services:{
+        embeddingWorkerReplicas:$embeddingWorkerReplicas,
+        reservationWorkerReplicas:$reservationWorkerReplicas
+      },
       evidence:"PROVISIONAL",
       notes:[
         "waiting=0 required for recovery PASS",
