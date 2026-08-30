@@ -42,7 +42,7 @@ describe('QualityBenchmarkService', () => {
     findCampaignCachesByIds: jest.Mock;
     searchCampaignTagVectors: jest.Mock;
     searchCampaignDocumentVectors: jest.Mock;
-    reserveFirstAvailable: jest.Mock;
+    reserveAuction: jest.Mock;
   };
   let matcher: {
     matchCandidates: jest.Mock;
@@ -90,7 +90,7 @@ describe('QualityBenchmarkService', () => {
           }))
         )
       ),
-      reserveFirstAvailable: jest.fn(),
+      reserveAuction: jest.fn(),
     };
     const scored = () =>
       state.map((item) => ({
@@ -226,7 +226,7 @@ describe('QualityBenchmarkService', () => {
       expect.objectContaining({ tags: ['React'] }),
       'dense_only'
     );
-    expect(repository.reserveFirstAvailable).not.toHaveBeenCalled();
+    expect(repository.reserveAuction).not.toHaveBeenCalled();
     expect(contextEmbeddingService.completeJob).toHaveBeenCalledTimes(1);
     expect(state[0]).toMatchObject({ dailySpent: 0, totalSpent: 0 });
   });

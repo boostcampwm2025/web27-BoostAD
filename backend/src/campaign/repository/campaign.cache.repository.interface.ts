@@ -1,8 +1,6 @@
 import {
   AuctionReservationRecord,
   AuctionTransitionResult,
-  BudgetReservationCandidate,
-  BudgetReservationResult,
   CachedCampaign,
   CachedCampaignWithoutSpent,
   CampaignDocumentVectorSearchHit,
@@ -48,10 +46,6 @@ export abstract class CampaignCacheRepository {
   // 예산 검증 통과 시 dailySpent += cpc, totalSpent += cpc 후 true 반환
   // 예산 초과 시 증가 없이 false 반환
   abstract incrementSpent(campaignId: string, cpc: number): Promise<boolean>;
-
-  abstract reserveFirstAvailable(
-    candidates: BudgetReservationCandidate[]
-  ): Promise<BudgetReservationResult | null>;
 
   abstract reserveAuction(
     request: ReserveAuctionRequest

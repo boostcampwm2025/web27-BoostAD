@@ -376,7 +376,6 @@ describe('TransformerMatcher ANN path', () => {
       'dense-1',
       'sparse-1',
     ]);
-    expect('reserveFirstAvailable' in repository).toBe(false);
   });
 
   it('returns Hybrid rankings from findQualityRankings(hybrid)', async () => {

@@ -79,6 +79,7 @@ export class CampaignServingSnapshotService implements OnApplicationBootstrap {
 
     await this.ensureInitialized();
 
+    // 로컬 스냅샷에 캠페인이 없거나, 임베딩이 불완전한 캠페인들의 ID 찾기
     const repairIds = uniqueIds.filter((id) => {
       const campaign = this.state.campaignsById.get(id);
       return !campaign || !this.hasRequiredEmbeddings(campaign);

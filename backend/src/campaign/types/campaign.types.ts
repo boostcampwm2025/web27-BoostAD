@@ -121,11 +121,6 @@ export type BudgetReservationCandidate = {
   cpc: number;
 };
 
-export type BudgetReservationResult = {
-  campaignId: string;
-  attemptedCount: number;
-};
-
 export type AuctionReservationStatus =
   | 'RESERVED'
   | 'COMMITTED'

@@ -10,8 +10,6 @@ import {
 import {
   AuctionReservationRecord,
   AuctionTransitionResult,
-  BudgetReservationCandidate,
-  BudgetReservationResult,
   CachedCampaign,
   CachedCampaignWithoutSpent,
   CampaignDocumentVectorSearchHit,
@@ -29,7 +27,6 @@ import {
   REDIS_REPLACE_SPENT_SCRIPT,
   REDIS_RESET_DAILY_BUDGET_SCRIPT,
   REDIS_RESERVE_AUCTION_SCRIPT,
-  REDIS_RESERVE_FIRST_AVAILABLE_SCRIPT,
   REDIS_SAVE_CAMPAIGN_PRESERVING_RESERVED_SCRIPT,
 } from '../scripts/lua-script';
 import {
@@ -410,46 +407,6 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
     } catch (error) {
       this.logger.error(`캠페인 ${campaignId} Spent 증가 실패`, error);
       return false;
-    }
-  }
-
-  /**
-   * 순위가 확정된 후보를 앞에서부터 검사해 예산 확보가 가능한 첫 캠페인 하나를 예약한다.
-   * Lua 스크립트에서 예산 검증과 spent 증가를 원자적으로 처리하며, 예약할 후보가 없으면 null을 반환한다.
-   */
-  async reserveFirstAvailable(
-    candidates: BudgetReservationCandidate[]
-  ): Promise<BudgetReservationResult | null> {
-    if (candidates.length === 0) {
-      return null;
-    }
-
-    const keys = candidates.map((candidate) =>
-      this.getCampaignCacheKey(candidate.campaignId)
-    );
-    const cpcs = candidates.map((candidate) => String(candidate.cpc));
-
-    try {
-      const result = (await this.ioredisClient.eval(
-        REDIS_RESERVE_FIRST_AVAILABLE_SCRIPT,
-        keys.length,
-        ...keys,
-        ...cpcs
-      )) as [number, number];
-      const selectedIndex = Number(result?.[0] ?? 0);
-      const attemptedCount = Number(result?.[1] ?? candidates.length);
-
-      if (selectedIndex <= 0 || selectedIndex > candidates.length) {
-        return null;
-      }
-
-      return {
-        campaignId: candidates[selectedIndex - 1].campaignId,
-        attemptedCount,
-      };
-    } catch (error) {
-      this.logger.error('순위 window winner-only 예약 실패', error);
-      return null;
     }
   }
 
@@ -843,7 +800,7 @@ export class RedisCampaignCacheRepository implements CampaignCacheRepository {
   }
 
   /**
-   * Redis에서 전체 캠페인 조회
+   * L1과 Redis에서 전체 캠페인 조회
    */
   async getAllCampaigns(options?: {
     allowStale?: boolean;

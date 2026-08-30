@@ -72,36 +72,6 @@ describe('RedisCampaignCacheRepository winner-only reservation', () => {
     };
   };
 
-  it('maps the Lua selected index back to the ranked campaign ID', async () => {
-    const { repository, redis } = buildRepository([2, 2]);
-
-    const result = await repository.reserveFirstAvailable([
-      { campaignId: 'first', cpc: 10 },
-      { campaignId: 'second', cpc: 20 },
-    ]);
-
-    expect(result).toEqual({ campaignId: 'second', attemptedCount: 2 });
-    expect(redis.eval).toHaveBeenCalledWith(
-      expect.any(String),
-      2,
-      'campaign:first',
-      'campaign:second',
-      '10',
-      '20'
-    );
-  });
-
-  it('returns null when no campaign in the window is reservable', async () => {
-    const { repository } = buildRepository([0, 2]);
-
-    await expect(
-      repository.reserveFirstAvailable([
-        { campaignId: 'first', cpc: 10 },
-        { campaignId: 'second', cpc: 20 },
-      ])
-    ).resolves.toBeNull();
-  });
-
   it('creates a versioned reservation using campaign keys and the expiration ZSET', async () => {
     const reservation = {
       version: 1,
