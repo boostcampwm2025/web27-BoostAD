@@ -76,22 +76,15 @@ services:
     mem_limit: ${BACKEND_MEM_LIMIT:-4g}
     pids_limit: ${BACKEND_PIDS_LIMIT:-256}
 
-  backend-worker:
+  embedding-worker:
     build:
       context: .
       dockerfile: backend/Dockerfile.prod
-    container_name: boostad-backend-worker-local
-    command: node dist/worker.main.js
+    command: node dist/embedding-worker.main.js
     environment:
       NODE_ENV: ${NODE_ENV:-development}
-      DB_HOST: mysql
-      DB_PORT: '3306'
-      DB_USERNAME: ${DB_USERNAME:-test_user}
-      DB_PASSWORD: ${DB_PASSWORD:-test_user}
-      DB_DATABASE: ${DB_DATABASE:-test_db}
       REDIS_HOST: redis
       REDIS_PORT: '6379'
-      JWT_SECRET: ${JWT_SECRET:-local-dev-jwt-secret}
       RTB_EMBEDDING_PROFILE: ${RTB_EMBEDDING_PROFILE:-multilingual_e5_small}
       RTB_EMBEDDING_QUEUE_NAME: ${RTB_EMBEDDING_QUEUE_NAME:-}
       RTB_DENSE_RETRIEVAL_MODE: ${RTB_DENSE_RETRIEVAL_MODE:-semantic_document}
@@ -99,16 +92,34 @@ services:
       RTB_CONTEXT_READY_TTL_SECONDS: ${RTB_CONTEXT_READY_TTL_SECONDS:-604800}
       RTB_CONTEXT_PENDING_TTL_SECONDS: ${RTB_CONTEXT_PENDING_TTL_SECONDS:-600}
       RTB_CONTEXT_JOB_LOCK_TTL_SECONDS: ${RTB_CONTEXT_JOB_LOCK_TTL_SECONDS:-600}
+    depends_on:
+      - redis
+    networks:
+      - boostad-local
+    restart: unless-stopped
+    cpus: ${EMBEDDING_WORKER_CPUS:-2.0}
+    mem_limit: ${EMBEDDING_WORKER_MEM_LIMIT:-4g}
+    pids_limit: ${EMBEDDING_WORKER_PIDS_LIMIT:-256}
+
+  reservation-worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile.prod
+    command: node dist/reservation-worker.main.js
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      REDIS_HOST: redis
+      REDIS_PORT: '6379'
       RTB_AUCTION_TERMINAL_TTL_SECONDS: ${RTB_AUCTION_TERMINAL_TTL_SECONDS:-1800}
       RTB_RESERVATION_SWEEP_INTERVAL_MS: ${RTB_RESERVATION_SWEEP_INTERVAL_MS:-1000}
       RTB_RESERVATION_SWEEP_BATCH_SIZE: ${RTB_RESERVATION_SWEEP_BATCH_SIZE:-100}
       RTB_RESERVATION_SWEEP_TIME_BUDGET_MS: ${RTB_RESERVATION_SWEEP_TIME_BUDGET_MS:-200}
       RTB_RESERVATION_SWEEP_MAX_BATCHES: ${RTB_RESERVATION_SWEEP_MAX_BATCHES:-10}
     depends_on:
-      - mysql
       - redis
     networks:
       - boostad-local
     restart: unless-stopped
-    cpus: ${BACKEND_WORKER_CPUS:-2.0}
-    mem_limit: ${BACKEND_WORKER_MEM_LIMIT:-4g}
+    cpus: ${RESERVATION_WORKER_CPUS:-0.5}
+    mem_limit: ${RESERVATION_WORKER_MEM_LIMIT:-512m}
+    pids_limit: ${RESERVATION_WORKER_PIDS_LIMIT:-128}

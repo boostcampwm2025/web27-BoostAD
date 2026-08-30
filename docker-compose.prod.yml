@@ -58,11 +58,11 @@ services:
       - '3000'
     restart: unless-stopped
 
-  backend-worker:
+  embedding-worker:
     image: ${NCR_ENDPOINT:-local}/boostad/backend:${IMAGE_TAG:-deploy}
-    command: ['node', 'dist/worker.main.js']
+    command: ['node', 'dist/embedding-worker.main.js']
     environment:
-      # Worker는 HTTP 서버를 띄우지 않고 BullMQ Consumer만 실행합니다.
+      # HTTP 서버 없이 embedding queue만 소비합니다.
       NODE_ENV: ${NODE_ENV:-development}
       REDIS_HOST: ${REDIS_HOST:-localhost}
       REDIS_PORT: ${REDIS_PORT:-6379}
@@ -73,12 +73,21 @@ services:
       RTB_CONTEXT_READY_TTL_SECONDS: ${RTB_CONTEXT_READY_TTL_SECONDS:-604800}
       RTB_CONTEXT_PENDING_TTL_SECONDS: ${RTB_CONTEXT_PENDING_TTL_SECONDS:-600}
       RTB_CONTEXT_JOB_LOCK_TTL_SECONDS: ${RTB_CONTEXT_JOB_LOCK_TTL_SECONDS:-600}
+    restart: unless-stopped
+
+  reservation-worker:
+    image: ${NCR_ENDPOINT:-local}/boostad/backend:${IMAGE_TAG:-deploy}
+    command: ['node', 'dist/reservation-worker.main.js']
+    environment:
+      # HTTP 서버와 E5 모델 없이 reservation expiration만 회수합니다.
+      NODE_ENV: ${NODE_ENV:-development}
+      REDIS_HOST: ${REDIS_HOST:-localhost}
+      REDIS_PORT: ${REDIS_PORT:-6379}
       RTB_AUCTION_TERMINAL_TTL_SECONDS: ${RTB_AUCTION_TERMINAL_TTL_SECONDS:-1800}
       RTB_RESERVATION_SWEEP_INTERVAL_MS: ${RTB_RESERVATION_SWEEP_INTERVAL_MS:-1000}
       RTB_RESERVATION_SWEEP_BATCH_SIZE: ${RTB_RESERVATION_SWEEP_BATCH_SIZE:-100}
       RTB_RESERVATION_SWEEP_TIME_BUDGET_MS: ${RTB_RESERVATION_SWEEP_TIME_BUDGET_MS:-200}
       RTB_RESERVATION_SWEEP_MAX_BATCHES: ${RTB_RESERVATION_SWEEP_MAX_BATCHES:-10}
-      # Xenova 모델 로딩(부트스트랩) 시 필요한 설정은 별도 없음.
     restart: unless-stopped
 
   node-exporter:
